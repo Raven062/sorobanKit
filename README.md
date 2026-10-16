@@ -297,6 +297,9 @@ To ensure a seamless local developer installation requiring zero guesswork, plea
 
 For Render deployments, make sure the web service has `DATABASE_URL` set in its environment or linked from a Render PostgreSQL instance before startup. The container runs `prisma migrate deploy` during boot, so the variable must be available at runtime.
 
+### CI / GitHub Actions Secrets
+- `TESTNET_API_URL` - **(Required for `deploy-testnet.yml`)** Base URL of the deployed testnet API service (e.g., `https://api.example.com`). Used by the post-deploy health check step (`${TESTNET_API_URL}/health`) to verify an HTTP `200` response and `status: "up"` before marking the deployment workflow green.
+
 ## Logging
 
 The server logs through a shared [Winston](https://github.com/winstonjs/winston) logger
