@@ -1,8 +1,9 @@
 import { Fragment, useCallback, useEffect, useState } from 'react';
 import NetworkBadge from '../NetworkBadge';
 import ScrollToTop from '../ScrollToTop';
+import LoadingSpinner from '../LoadingSpinner';
 import MobileNav from './MobileNav';
-import { HORIZON_BASE, NAV_STORAGE_KEY, formatShortAddress, useNavState, useWalletMenu } from './shared';
+import { NAV_STORAGE_KEY, formatShortAddress, useNavState, useWalletMenu } from './shared';
 
 function HistoryPage({
   userPublicKey,
@@ -16,19 +17,17 @@ function HistoryPage({
   onRegisterClick,
   canRegister,
 }) {
-  const PAGE_LIMIT = 20;
+  const PAGE_LIMIT = 50;
 
   const [isNavOpen, setIsNavOpen] = useNavState();
   const [isConnecting, setIsConnecting] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [historyError, setHistoryError] = useState("");
   const [history, setHistory] = useState([]);
   const [expandedId, setExpandedId] = useState(null);
   const [refreshIndex, setRefreshIndex] = useState(0);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
-  const [cursor, setCursor] = useState(null);
   const {
     menuRef,
     isOpen: isWalletMenuOpen,
@@ -60,36 +59,27 @@ function HistoryPage({
   };
 
   const loadHistory = useCallback(
-    async (signal, { append = false, nextCursor = null } = {}) => {
+    async (signal, { pageNumber = 1 } = {}) => {
       if (!userPublicKey) {
         return;
       }
 
       await Promise.resolve();
-      if (append) {
-        setIsLoadingMore(true);
-      } else {
-        setIsLoading(true);
-        setHistory([]);
-        setCursor(null);
-        setHasMore(false);
-      }
+      setIsLoading(true);
+      setHistory([]);
+      setHasMore(false);
       setHistoryError("");
       try {
-        const url = nextCursor
-          ? `${HORIZON_BASE}/accounts/${userPublicKey}/payments?order=desc&limit=${PAGE_LIMIT}&cursor=${encodeURIComponent(nextCursor)}`
-          : `${HORIZON_BASE}/accounts/${userPublicKey}/payments?order=desc&limit=${PAGE_LIMIT}`;
+        const url = `${HORIZON_BASE}/transactions/export?account=${encodeURIComponent(userPublicKey)}&page=${pageNumber}&limit=${PAGE_LIMIT}`;
         const response = await fetch(url, { signal, cache: "no-store" });
         if (!response.ok) {
-          throw new Error(`Horizon error (${response.status}).`);
+          throw new Error(`Export error (${response.status}).`);
         }
 
         const data = await response.json();
-        const records = data?._embedded?.records ?? [];
-        const nextLink = data?._links?.next?.href ?? null;
-        const nextPageCursor = nextLink
-          ? new URL(nextLink).searchParams.get("cursor")
-          : null;
+        const records = Array.isArray(data)
+          ? data
+          : (data?.records ?? data?.transactions ?? data?._embedded?.records ?? []);
         const filtered = records.filter((record) =>
           [
             "payment",
@@ -197,13 +187,8 @@ function HistoryPage({
           }
         }
 
-        setCursor(nextPageCursor);
-        setHasMore(Boolean(nextPageCursor));
-        if (append) {
-          setHistory((prev) => [...prev, ...formatted]);
-        } else {
-          setHistory(formatted);
-        }
+        setHasMore(records.length >= PAGE_LIMIT);
+        setHistory(formatted);
       } catch (error) {
         if (error.name !== "AbortError") {
           setHistoryError(
@@ -212,26 +197,33 @@ function HistoryPage({
         }
       } finally {
         setIsLoading(false);
-        setIsLoadingMore(false);
       }
     },
     [onRefreshBalance, userPublicKey, PAGE_LIMIT],
   );
 
-  const handleLoadMore = () => {
-    const controller = new AbortController();
-    setPage((p) => p + 1);
-    loadHistory(controller.signal, { append: true, nextCursor: cursor });
+  const handlePreviousPage = () => {
+    setExpandedId(null);
+    setPage((current) => Math.max(1, current - 1));
+  };
+
+  const handleNextPage = () => {
+    setExpandedId(null);
+    setPage((current) => current + 1);
   };
 
   useEffect(() => {
     const controller = new AbortController();
     const run = async () => {
-      await loadHistory(controller.signal);
+      await loadHistory(controller.signal, { pageNumber: page });
     };
     run();
     return () => controller.abort();
-  }, [loadHistory, refreshIndex, userPublicKey]);
+  }, [loadHistory, refreshIndex, userPublicKey, page]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [userPublicKey]);
 
   useEffect(() => {
     const handleUpdate = () => {
@@ -376,9 +368,9 @@ function HistoryPage({
               </button>
             </div>
           )}
-          {userPublicKey && (isLoading || isLoadingMore) && (
+          {userPublicKey && isLoading && (
             <div className="wallet-status" aria-live="polite">
-              {isLoading ? "Loading transactions..." : "Loading more..."}
+              <LoadingSpinner label="Loading transactions..." />
             </div>
           )}
           {userPublicKey && historyError && (
@@ -471,15 +463,26 @@ function HistoryPage({
                 </tbody>
               </table>
             )}
-          {userPublicKey && !isLoading && !historyError && hasMore && (
-            <div className="load-more-row">
+          {userPublicKey && !historyError && (
+            <div className="pagination-controls">
               <button
                 type="button"
-                className="load-more-button"
-                onClick={handleLoadMore}
-                disabled={isLoadingMore}
+                className="pagination-button"
+                onClick={handlePreviousPage}
+                disabled={isLoading || page <= 1}
               >
-                {isLoadingMore ? "Loading..." : "Load more"}
+                Previous
+              </button>
+              <span className="pagination-status" aria-live="polite">
+                Page {page}
+              </span>
+              <button
+                type="button"
+                className="pagination-button"
+                onClick={handleNextPage}
+                disabled={isLoading || !hasMore}
+              >
+                Next
               </button>
             </div>
           )}
