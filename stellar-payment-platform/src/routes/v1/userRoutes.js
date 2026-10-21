@@ -214,11 +214,22 @@ router.post(
 
     const normalizedUsername = username.toLowerCase();
 
+    // #171 — these guards apply to every registration slot (primary and
+    // aliases), not just the first username for an address.
     if (RESERVED_NAMES.includes(normalizedUsername)) {
       return next(
         new ApiError(
           "FORBIDDEN",
           "This username is reserved and cannot be registered.",
+        ),
+      );
+    }
+
+    if (BLOCKED_EXCHANGES.includes(address)) {
+      return next(
+        new ApiError(
+          "FORBIDDEN",
+          "This address is blocked and cannot register federation usernames.",
         ),
       );
     }
@@ -533,6 +544,9 @@ router.get(
 
         const result = await lookupCached(address, async () => {
           // #613 — an address can have several usernames; return the primary.
+          // #170 — soft-deleted rows must not be resolvable via reverse lookup;
+          // this mirrors the forward `/federation` query, which also filters
+          // `deletedAt: null`.
           const row = await prisma.user.findFirst({
             where: { address, deletedAt: null },
             select: { username: true },

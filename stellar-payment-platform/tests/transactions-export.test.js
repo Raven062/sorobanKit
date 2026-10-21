@@ -117,6 +117,48 @@ describe('GET /transactions/export', () => {
     });
   });
 
+  describe('empty result sets', () => {
+    test('returns 404 NOT_FOUND when Horizon reports the account does not exist', async () => {
+      mockPayments.mockReturnValue({
+        forAccount: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        call: jest.fn().mockRejectedValue({ response: { status: 404 } }),
+      });
+
+      const res = await request(app).get(`/api/v1/transactions/export?address=${ADDRESS}`);
+
+      expect(res.status).toBe(404);
+      expect(res.body).toMatchObject({
+        success: false,
+        error: { code: 'NOT_FOUND' },
+      });
+    });
+
+    test('returns 200 with only the header row and X-Total-Records: 0 for an account with no payments', async () => {
+      mockPages([[]]);
+      const res = await request(app).get(`/api/v1/transactions/export?address=${ADDRESS}`);
+
+      expect(res.status).toBe(200);
+      expect(res.headers['content-type']).toContain('text/csv');
+      expect(res.headers['content-disposition']).toContain('attachment');
+      expect(res.headers['x-total-records']).toBe('0');
+      expect(res.text).toBe(`${COLUMNS.join(',')}\r\n`);
+    });
+
+    test('streams rows normally for an account with payments', async () => {
+      mockPages([[record(1), record(2)]]);
+      const res = await request(app).get(`/api/v1/transactions/export?address=${ADDRESS}`);
+      const lines = res.text.trim().split('\r\n');
+
+      expect(res.status).toBe(200);
+      expect(lines[0]).toBe(COLUMNS.join(','));
+      expect(lines).toHaveLength(3);
+      expect(res.text).toContain('id-1');
+      expect(res.text).toContain('id-2');
+    });
+  });
+
   describe('pagination', () => {
     test('follows Horizon cursors until a short page ends the export', async () => {
       const full = Array.from({ length: 200 }, (_, i) => record(i));
