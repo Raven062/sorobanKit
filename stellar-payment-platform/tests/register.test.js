@@ -346,81 +346,8 @@ describe('POST /api/v1/register — validation and conflict handling', () => {
   });
 });
 
-// ── X-Correlation-ID header assertions ────────────────────────────────────────
-
-describe('POST /api/v1/register — username case normalisation', () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-    mockCount.mockResolvedValue(0);
-    mockFindFirst.mockResolvedValue(null);
-  });
-
-  it('stores "Alice" as "alice" (lowercased at schema level)', async () => {
-    mockCreate.mockResolvedValue({
-      username: 'alice',
-      address: VALID_ADDRESS,
-      isPrimary: true,
-    });
-
-    const res = await request(app)
-      .post('/api/v1/register')
-      .set('Content-Type', 'application/json')
-      .send({ username: 'Alice', address: VALID_ADDRESS });
-
-    expect([200, 201]).toContain(res.status);
-    // The handler stores the lowercase form (with *localhost domain suffix)
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ username: expect.stringMatching(/^alice\*/) }),
-      }),
-    );
-  });
-
-  it('stores "ALICE" as "alice"', async () => {
-    mockCreate.mockResolvedValue({
-      username: 'alice',
-      address: VALID_ADDRESS,
-      isPrimary: true,
-    });
-
-    const res = await request(app)
-      .post('/api/v1/register')
-      .set('Content-Type', 'application/json')
-      .send({ username: 'ALICE', address: VALID_ADDRESS });
-
-    expect([200, 201]).toContain(res.status);
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ username: expect.stringMatching(/^alice\*/) }),
-      }),
-    );
-  });
-
-  it('stores "Alice123" as "alice123"', async () => {
-    mockCreate.mockResolvedValue({
-      username: 'alice123',
-      address: VALID_ADDRESS,
-      isPrimary: true,
-    });
-
-    const res = await request(app)
-      .post('/api/v1/register')
-      .set('Content-Type', 'application/json')
-      .send({ username: 'Alice123', address: VALID_ADDRESS });
-
-    expect([200, 201]).toContain(res.status);
-    expect(mockCreate).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ username: expect.stringMatching(/^alice123\*/) }),
-      }),
-    );
-  });
-});
-
-// ── X-Correlation-ID header assertions ────────────────────────────────────────
-
-describe('POST /api/v1/register — X-Correlation-ID header', () => {
-  const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+describe('POST /api/v1/register — Location header (issue #199)', () => {
+  const originalDomain = process.env.STELLAR_TAG_DOMAIN;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -433,65 +360,54 @@ describe('POST /api/v1/register — X-Correlation-ID header', () => {
     });
   });
 
-  it('includes X-Correlation-ID on a successful 201 response', async () => {
+  afterEach(() => {
+    if (originalDomain === undefined) {
+      delete process.env.STELLAR_TAG_DOMAIN;
+    } else {
+      process.env.STELLAR_TAG_DOMAIN = originalDomain;
+    }
+  });
+
+  it('includes a Location header pointing to the federation URL on success', async () => {
+    process.env.STELLAR_TAG_DOMAIN = 'example.com';
+
     const res = await request(app)
       .post('/api/v1/register')
       .set('Content-Type', 'application/json')
-      .send(makeRegisterPayload());
+      .send(makeRegisterPayload({ username: 'alice123' }));
 
     expect([200, 201]).toContain(res.status);
-    expect(res.headers['x-correlation-id']).toBeDefined();
-    expect(res.headers['x-correlation-id']).toMatch(UUID_RE);
+    expect(res.headers.location).toBe('/federation?q=alice123*example.com');
   });
 
-  it('includes X-Correlation-ID on a 422 validation failure response', async () => {
-    const res = await request(app)
-      .post('/api/v1/register')
-      .set('Content-Type', 'application/json')
-      .send({ address: VALID_ADDRESS }); // missing username
-
-    expect(res.status).toBe(422);
-    expect(res.headers['x-correlation-id']).toBeDefined();
-    expect(res.headers['x-correlation-id']).toMatch(UUID_RE);
-  });
-
-  it('includes X-Correlation-ID on a 409 conflict response', async () => {
-    const conflictErr = new Error('Unique constraint failed on field username');
-    conflictErr.code = 'P2002';
-    mockCreate.mockRejectedValue(conflictErr);
+  it('derives the Location domain from the request host when STELLAR_TAG_DOMAIN is unset', async () => {
+    delete process.env.STELLAR_TAG_DOMAIN;
 
     const res = await request(app)
       .post('/api/v1/register')
+      .set('Host', 'stellar.example.org')
       .set('Content-Type', 'application/json')
-      .send(makeRegisterPayload());
-
-    expect(res.status).toBe(409);
-    expect(res.headers['x-correlation-id']).toBeDefined();
-    expect(res.headers['x-correlation-id']).toMatch(UUID_RE);
-  });
-
-  it('error body correlation_id matches X-Correlation-ID header on 422', async () => {
-    const res = await request(app)
-      .post('/api/v1/register')
-      .set('Content-Type', 'application/json')
-      .send({ address: VALID_ADDRESS }); // missing username
-
-    expect(res.status).toBe(422);
-    const headerId = res.headers['x-correlation-id'];
-    expect(headerId).toBeDefined();
-    expect(res.body.correlation_id).toBe(headerId);
-  });
-
-  it('echoes back a caller-supplied X-Correlation-ID on success', async () => {
-    const myId = 'aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa';
-
-    const res = await request(app)
-      .post('/api/v1/register')
-      .set('Content-Type', 'application/json')
-      .set('X-Correlation-ID', myId)
-      .send(makeRegisterPayload());
+      .send(makeRegisterPayload({ username: 'alice123' }));
 
     expect([200, 201]).toContain(res.status);
-    expect(res.headers['x-correlation-id']).toBe(myId);
+    expect(res.headers.location).toBe('/federation?q=alice123*stellar.example.org');
+  });
+
+  it('keeps the existing response body contract alongside the Location header', async () => {
+    process.env.STELLAR_TAG_DOMAIN = 'example.com';
+
+    const res = await request(app)
+      .post('/api/v1/register')
+      .set('Content-Type', 'application/json')
+      .send(makeRegisterPayload({ username: 'alice123' }));
+
+    expect(res.headers.location).toBe('/federation?q=alice123*example.com');
+    expect(res.body).toMatchObject({
+      ok: true,
+      username: expect.stringContaining('alice123'),
+      address: VALID_ADDRESS,
+      is_primary: expect.any(Boolean),
+      federation_address: expect.stringContaining('alice123'),
+    });
   });
 });

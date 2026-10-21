@@ -10,6 +10,7 @@ const { poolGet, poolRun, poolAll, etagCache } = require("../../db");
 const { logger } = require("../../logger");
 const { transferAccount } = require("../../services/registrationService");
 const { lookupCached, invalidateFederationCache } = require("../../cache");
+const federationCache = require("../../federationCache");
 const {
   paginatedResponse,
   parsePagination,
@@ -433,10 +434,22 @@ router.delete(
           where: { username },
           data: { deletedAt: new Date() },
         });
-
-        // Invalidate any stale federation cache entries
-        invalidateFederationCache(username, existing.address);
       });
+
+      // #198 — explicitly drop the federation cache entry for the
+      // unregistered username (and its address) so GET /federation misses the
+      // cache and returns 404 immediately instead of serving a stale address
+      // for the remainder of the TTL. The TTL-based eviction remains as a
+      // fallback if the explicit delete fails.
+      try {
+        await federationCache.del(username);
+      } catch (cacheError) {
+        logger.warn(
+          `Federation cache invalidation failed for ${username}:`,
+          cacheError.message,
+        );
+      }
+      invalidateFederationCache(username, existing.address);
 
       await recordActivity(prisma, {
         username,
