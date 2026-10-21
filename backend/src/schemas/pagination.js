@@ -39,6 +39,18 @@ const assetCodeSchema = z
   .regex(/^[A-Za-z0-9]+$/, 'assetCode must be alphanumeric');
 
 /**
+ * Optional `cursor` schema for cursor-based pagination.
+ *
+ * The cursor is the last seen record `id`. Accepts a positive integer
+ * (coerced from the query string) so it can be used directly as a Prisma
+ * `cursor`/`where` value.
+ */
+const cursorSchema = z.coerce
+  .number()
+  .int()
+  .positive();
+
+/**
  * Routing stats query schema: pagination plus an optional `assetCode` filter.
  */
 const routingStatsQuerySchema = paginationSchema.extend({
@@ -80,15 +92,35 @@ function parsePagination(query = {}) {
 }
 
 /**
+ * Parse an optional `cursor` query param for cursor-based pagination.
+ *
+ * Returns the cursor as a positive integer, or `null` when absent/invalid
+ * so callers can fall back to offset-based pagination.
+ *
+ * @param {object} [query]
+ * @returns {number | null}
+ */
+function parseCursor(query = {}) {
+  if (query.cursor === undefined || query.cursor === null || query.cursor === '') {
+    return null;
+  }
+
+  const result = cursorSchema.safeParse(query.cursor);
+  return result.success ? result.data : null;
+}
+
+/**
  * Build the pagination `meta` block returned alongside `data`.
  *
  * Always includes every meta field so clients can safely read
  * `meta.totalPages` even when there are no results (defaults to 0).
+ * `nextCursor` is the last seen `id` for cursor-based pagination, or `null`
+ * when there are no further pages.
  *
- * @param {{ total: number, page: number, limit: number }} params
- * @returns {{ total: number, page: number, limit: number, totalPages: number }}
+ * @param {{ total: number, page: number, limit: number, nextCursor?: number | null }} params
+ * @returns {{ total: number, page: number, limit: number, totalPages: number, nextCursor: number | null }}
  */
-function buildPaginationMeta({ total, page, limit }) {
+function buildPaginationMeta({ total, page, limit, nextCursor = null }) {
   const safeLimit = limit > 0 ? limit : DEFAULT_LIMIT;
   const safeTotal = Number.isFinite(total) && total > 0 ? total : 0;
 
@@ -97,6 +129,7 @@ function buildPaginationMeta({ total, page, limit }) {
     page,
     limit: safeLimit,
     totalPages: Math.ceil(safeTotal / safeLimit) || 0,
+    nextCursor: nextCursor ?? null,
   };
 }
 
@@ -106,7 +139,9 @@ module.exports = {
   MAX_LIMIT,
   paginationSchema,
   assetCodeSchema,
+  cursorSchema,
   routingStatsQuerySchema,
   parsePagination,
+  parseCursor,
   buildPaginationMeta,
 };
