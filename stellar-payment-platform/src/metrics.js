@@ -113,11 +113,12 @@ function metricsMiddleware(req, res, next) {
 
   res.on('finish', () => {
     const duration = (Date.now() - start) / 1000;
-    // Normalize the route label: use the matched route pattern (never the raw
-    // path, query string, or concrete ids), include the router mount prefix
+    // Normalize the route label: use the matched route template from
+    // req.route.path (e.g. "/users/:username/activity") so concrete parameter
+    // values never become label values, include the router mount prefix
     // (e.g. "/api/v1"), and collapse unmatched/404 paths to "unknown" so label
     // cardinality stays bounded even under arbitrary-path probing.
-    const route = req.route
+    const route = req.route?.path
       ? `${req.baseUrl || ''}${req.route.path}`
       : 'unknown';
     const labels = {

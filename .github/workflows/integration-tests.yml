@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'payment_router/src/**'
+      - 'tests/e2e/**'
+      - '.github/workflows/integration-tests.yml'
 
 jobs:
   integration-tests:
@@ -40,3 +42,59 @@ jobs:
       - name: Stop local Stellar network
         if: always()
         run: docker compose --profile integration down -v
+
+  e2e-tests:
+    name: End-to-End Flow Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Start local dev stack
+        run: docker compose --profile dev up -d --build
+
+      - name: Wait for dev stack to be ready
+        run: |
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:3000/health > /dev/null; then
+              echo "Dev stack is ready"
+              exit 0
+            fi
+            echo "Waiting for dev stack... ($i/60)"
+            sleep 5
+          done
+          echo "Timed out waiting for dev stack" >&2
+          docker compose --profile dev logs
+          exit 1
+
+      - name: Run full-flow e2e suite
+        env:
+          E2E_BASE_URL: http://localhost:3000
+          E2E_FEDERATION_URL: http://localhost:3000/federation
+          E2E_WEBHOOK_SECRET: ${{ secrets.E2E_WEBHOOK_SECRET }}
+        run: npx jest tests/e2e/full-flow.e2e.test.js --runInBand --forceExit
+
+      - name: Run remaining e2e suites
+        env:
+          E2E_BASE_URL: http://localhost:3000
+          E2E_FEDERATION_URL: http://localhost:3000/federation
+          E2E_WEBHOOK_SECRET: ${{ secrets.E2E_WEBHOOK_SECRET }}
+        run: npx jest tests/e2e --runInBand --forceExit
+
+      - name: Dump dev stack logs on failure
+        if: failure()
+        run: docker compose --profile dev logs
+
+      - name: Stop local dev stack
+        if: always()
+        run: docker compose --profile dev down -v

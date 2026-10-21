@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ScrollToTop from '../ScrollToTop';
 import MobileNav from './MobileNav';
 import { NAV_STORAGE_KEY, useNavState } from './shared';
@@ -14,6 +14,43 @@ function HelpPage({
 }) {
   const [isNavOpen, setIsNavOpen] = useNavState();
   const [activeHelpAction, setActiveHelpAction] = useState("");
+  const [faqItems, setFaqItems] = useState([]);
+  const [isFaqLoading, setIsFaqLoading] = useState(true);
+  const [faqError, setFaqError] = useState(null);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadFaq = async () => {
+      setIsFaqLoading(true);
+      setFaqError(null);
+      try {
+        const response = await fetch('/faq.json');
+        if (!response.ok) {
+          throw new Error(`Failed to load FAQ (status ${response.status})`);
+        }
+        const data = await response.json();
+        if (!isCancelled) {
+          setFaqItems(Array.isArray(data) ? data : []);
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          setFaqError(error.message || 'Failed to load FAQ');
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsFaqLoading(false);
+        }
+      }
+    };
+
+    loadFaq();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
   const closeNav = () => {
     sessionStorage.setItem(NAV_STORAGE_KEY, "false");
     setIsNavOpen(false);
@@ -24,45 +61,6 @@ function HelpPage({
     action();
   };
 
-  const helpContent = {
-    identity: (
-      <div className="help-action-content">
-        <p>
-          Our platform uses a Federation Server. This acts as a decentralized
-          phonebook that maps your easy-to-read name tag directly to your
-          cryptographic public key.
-        </p>
-        <div className="help-action-block">
-          <strong>The Process:</strong>
-          <ol>
-            <li>Navigate to the Profile page.</li>
-            <li>Connect your Freighter Wallet to verify ownership.</li>
-            <li>Enter your desired username and click Claim.</li>
-          </ol>
-        </div>
-        <p className="help-action-note">
-          Note: Once claimed, your name tag is permanent and can be shared with
-          anyone on the network to receive instant payments.
-        </p>
-      </div>
-    ),
-    troubleshooting: (
-      <div className="help-action-content">
-        <p>
-          <strong>Simulation Failed:</strong> If the dashboard says "Simulation
-          Failed," it usually means the smart contract rejected the logic.
-          Ensure you aren't trying to send more XLM than you actually have in
-          your balance (including the 0.4% fee, capped at 30 XLM).
-        </p>
-        <p>
-          <strong>Wallet Locked:</strong> If the Freighter popup doesn't appear,
-          check the extension icon in your browser. If it has a red dot or says
-          "Locked," you must re-enter your password before the dashboard can
-          request a signature.
-        </p>
-      </div>
-    ),
-  };
   return (
     <div className={`dashboard ${isNavOpen ? "nav-open" : ""}`}>
       <button
@@ -169,7 +167,33 @@ function HelpPage({
               className={`help-action-panel ${activeHelpAction ? "is-visible" : ""}`}
               aria-live="polite"
             >
-              {helpContent[activeHelpAction] ?? null}
+              {isFaqLoading && (
+                <div className="help-action-content" role="status">
+                  <p>Loading help content…</p>
+                </div>
+              )}
+              {!isFaqLoading && faqError && (
+                <div className="help-action-content" role="alert">
+                  <p>Unable to load help content. Please try again later.</p>
+                </div>
+              )}
+              {!isFaqLoading && !faqError && (
+                <div className="help-action-content">
+                  {faqItems.length === 0 ? (
+                    <p>No help content available yet.</p>
+                  ) : (
+                    faqItems.map((item, index) => (
+                      <div
+                        className="help-action-block"
+                        key={`${item.question}-${index}`}
+                      >
+                        <strong>{item.question}</strong>
+                        <p>{item.answer}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
             <div className="help-status">
               <span className="status-dot" aria-hidden="true" />

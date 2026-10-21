@@ -222,15 +222,12 @@ model WebhookEvent {
 // was added, apply the migration that recreates the FK with ON DELETE CASCADE.
 model ActivityLog {
   id        String   @id @default(uuid())
-  username  String
-  user      User     @relation(fields: [username], references: [username], onDelete: Cascade)
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [username], onDelete: Cascade)
   action    String
   metadata  Json?
-  ipAddress String?  @map("ip_address")
   createdAt DateTime @default(now()) @map("created_at")
 
-  // Serves the only read path: one user's trail, newest first, optionally
-  // bounded by a date range.
-  @@index([username, createdAt])
+  @@index([userId, createdAt])
   @@map("activity_logs")
 }
