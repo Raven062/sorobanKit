@@ -246,28 +246,22 @@ cd payment_router
 cargo build
 ```
 
-#### WASM hash verification
+#### Daily spending limit
 
-`payment_router/wasm.sha256` is a committed manifest holding the expected
-SHA-256 of the compiled contract WASM. It is updated automatically after a
-clean build, so an intentional release only needs the regenerated file
-committed alongside the contract change.
+The contract enforces a per-user daily spending limit. The window is a
+**24-hour wall-clock window (86,400 seconds)** measured from the ledger
+timestamp (`env.ledger().timestamp()`), not from a ledger sequence count.
+The timestamp of the last reset is stored in persistent storage alongside the
+daily spend, so:
 
-Before uploading the WASM, `scripts/deploy.js` recomputes the SHA-256 of the
-compiled artifact and compares it against the manifest. If they differ, the
-deployment aborts with a clear error, which prevents a corrupted or tampered
-WASM from reaching mainnet. Pass `--skip-hash-check` to bypass the check — a
-warning is logged when you do:
+- a payment made 86,399 seconds after the last reset still counts against the
+  current window;
+- a payment made 86,401 seconds after the last reset starts a fresh window and
+  resets the counter.
 
-```bash
-./scripts/deploy_contract.sh deploy --network testnet --skip-hash-check
-```
-
-To run the check on its own, without deploying:
-
-```bash
-npm run deploy:verify-hash
-```
+Because the window is time-based, it no longer drifts with ledger close times
+(which average ~5 seconds but are not guaranteed), so the limit resets when
+users expect it to.
 
 ### Contract TypeScript bindings
 
@@ -288,6 +282,17 @@ The result is committed to `packages/types` and consumed by the frontend as
 `@stellar-tags/payment-router` (a `file:` dependency). The `bindings-check` CI
 job fails the build if the checked-in bindings ever drift from the contract
 ABI.
+
+The generated `index.ts` exposes each contract method as an **individual named
+export** rather than a single class instance, so bundlers can tree-shake
+contract methods the dashboard never calls. Import only what you use:
+
+```ts
+import { get_refund_balance } from '@stellar-tags/payment-router';
+```
+
+Importing one method no longer pulls the rest of the binding module into the
+Vite bundle.
 
 ## Webhook signature verification
 
@@ -617,13 +622,19 @@ Returns historical payment routing statistics and aggregated volumes, fees, and 
   - `endDate` (optional) – `YYYY-MM-DD` inclusive upper bound on `createdAt`.
   - `groupBy` (optional) – `'day'` (default), `'week'`, or `'month'`.
   - `interval` (optional) – Alias for `groupBy`.
+  - `weekStart` (optional) – Only meaningful with `groupBy=week`. `'monday'` (default) or `'sunday'`.
   - `assetCode` (optional) – Filter transactions by asset code (e.g., `XLM`, `USDC`).
 - **Headers:** `x-api-key` (required) – must match `ADMIN_API_KEY` (or pass `api_key` in query params).
 - **Returns:** JSON object containing `interval`, `startDate`, `endDate`, `summary` (`total_volume`, `total_fees`, `total_count`), and `data` array of periodic records (`[{ period, volume, fees, count }]`).
 - **Status Codes:**
   - `200 OK`: Statistics retrieved successfully.
-  - `400 Bad Request`: Invalid date format, `startDate` after `endDate`, or invalid `groupBy`.
+  - `400 Bad Request`: Invalid date format, `startDate` after `endDate`, invalid `groupBy`, or invalid `weekStart`.
   - `401 Unauthorized`: Missing or invalid API key.
+
+**Week boundaries:** with `groupBy=week`, periods are ISO weeks starting on
+Monday by default. Pass `weekStart=sunday` to group into Sunday-based weeks
+instead. Both conventions are computed in SQL; a date that falls in different
+weeks under each convention (e.g. a Sunday) will appear in different periods.
 
 ### `GET /admin/audit-logs`
 Retrieves recent immutable audit trail records for mutating admin actions (`POST`, `PUT`, `DELETE`, `PATCH`).

@@ -146,6 +146,14 @@ describe('GET /admin/stats/routing', () => {
 
       expect(res.status).toBe(400);
     });
+
+    it('rejects invalid weekStart option with 400', async () => {
+      const res = await request(app)
+        .get('/api/v1/admin/stats/routing?groupBy=week&weekStart=tuesday')
+        .set('x-api-key', 'test-admin-key');
+
+      expect(res.status).toBe(400);
+    });
   });
 
   describe('Aggregation & Grouping', () => {
@@ -221,6 +229,71 @@ describe('GET /admin/stats/routing', () => {
       expect(res.body.data).toEqual([
         { period: '2026-08-10', volume: 250, fees: 2.5, count: 2 },
         { period: '2026-08-17', volume: 300, fees: 3, count: 1 },
+      ]);
+    });
+
+    it('groups records by ISO Monday-based weeks with weekStart=monday', async () => {
+      const records = [
+        // 2026-08-16 is a Sunday — belongs to ISO week starting Mon 2026-08-10
+        makeRecord({ id: '1', createdAt: new Date('2026-08-16T10:00:00Z'), amount: 100, fee: 1 }),
+        // 2026-08-17 is Monday of the next ISO week
+        makeRecord({ id: '2', createdAt: new Date('2026-08-17T10:00:00Z'), amount: 200, fee: 2 }),
+      ];
+      mockFindMany.mockResolvedValueOnce(records);
+
+      const res = await request(app)
+        .get('/api/v1/admin/stats/routing?groupBy=week&weekStart=monday')
+        .set('x-api-key', 'test-admin-key');
+
+      expect(res.status).toBe(200);
+      expect(res.body.interval).toBe('week');
+      expect(res.body.data).toEqual([
+        { period: '2026-08-10', volume: 100, fees: 1, count: 1 },
+        { period: '2026-08-17', volume: 200, fees: 2, count: 1 },
+      ]);
+    });
+
+    it('groups records by Sunday-based weeks with weekStart=sunday', async () => {
+      const records = [
+        // 2026-08-16 is a Sunday — starts the Sunday-based week
+        makeRecord({ id: '1', createdAt: new Date('2026-08-16T10:00:00Z'), amount: 100, fee: 1 }),
+        // 2026-08-17 is Monday, same Sunday-based week
+        makeRecord({ id: '2', createdAt: new Date('2026-08-17T10:00:00Z'), amount: 200, fee: 2 }),
+        // 2026-08-23 is Sunday of the next Sunday-based week
+        makeRecord({ id: '3', createdAt: new Date('2026-08-23T10:00:00Z'), amount: 300, fee: 3 }),
+      ];
+      mockFindMany.mockResolvedValueOnce(records);
+
+      const res = await request(app)
+        .get('/api/v1/admin/stats/routing?groupBy=week&weekStart=sunday')
+        .set('x-api-key', 'test-admin-key');
+
+      expect(res.status).toBe(200);
+      expect(res.body.interval).toBe('week');
+      expect(res.body.data).toEqual([
+        { period: '2026-08-16', volume: 300, fees: 3, count: 2 },
+        { period: '2026-08-23', volume: 300, fees: 3, count: 1 },
+      ]);
+    });
+
+    it('defaults to Monday-based weeks when weekStart is omitted', async () => {
+      const records = [
+        // 2026-08-16 is a Sunday — under ISO it belongs to week of 2026-08-10
+        makeRecord({ id: '1', createdAt: new Date('2026-08-16T10:00:00Z'), amount: 100, fee: 1 }),
+        // 2026-08-17 is Monday of the next ISO week
+        makeRecord({ id: '2', createdAt: new Date('2026-08-17T10:00:00Z'), amount: 200, fee: 2 }),
+      ];
+      mockFindMany.mockResolvedValueOnce(records);
+
+      const res = await request(app)
+        .get('/api/v1/admin/stats/routing?groupBy=week')
+        .set('x-api-key', 'test-admin-key');
+
+      expect(res.status).toBe(200);
+      expect(res.body.interval).toBe('week');
+      expect(res.body.data).toEqual([
+        { period: '2026-08-10', volume: 100, fees: 1, count: 1 },
+        { period: '2026-08-17', volume: 200, fees: 2, count: 1 },
       ]);
     });
 

@@ -16,6 +16,8 @@ jobs:
         target:
           - route_payment
           - route_batch
+          - route_payments
+          - refund_lifecycle
     steps:
       - uses: actions/checkout@v4
 
