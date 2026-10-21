@@ -1,0 +1,22 @@
+[
+  {
+    "question": "How do I claim my identity?",
+    "answer": "To claim your identity, navigate to the Identity page and follow the verification steps. You will need to provide the required information and submit it for review. Once approved, your identity will be linked to your account."
+  },
+  {
+    "question": "Why is my simulation not working?",
+    "answer": "If your simulation is not working, first check that you have entered all required parameters correctly. Ensure your account has the necessary permissions and that there are no active outages. If the problem persists, try refreshing the page or contacting support."
+  },
+  {
+    "question": "Why can't I connect my wallet?",
+    "answer": "Wallet connection issues are usually caused by an unsupported network, a locked wallet extension, or a pending connection request. Make sure your wallet is unlocked, connected to the correct network, and that you have approved the connection prompt."
+  },
+  {
+    "question": "What are your support hours?",
+    "answer": "Our support team is available Monday through Friday, 9:00 AM to 5:00 PM (local time). Requests submitted outside these hours will be addressed on the next business day."
+  },
+  {
+    "question": "How do I contact support?",
+    "answer": "You can reach our support team by email at support@example.com. Please include a detailed description of your issue and any relevant screenshots so we can assist you as quickly as possible."
+  }
+]

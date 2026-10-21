@@ -22,6 +22,7 @@ jest.mock('../prismaClient', () => ({
 
 jest.mock('../src/services/ownershipService', () => ({
   authenticateUsernameOwner: jest.fn(),
+  fetchAccountSigners: jest.fn(),
 }));
 
 jest.mock('../src/multisigner-verifier', () => ({ verifyMultiSignerThreshold: jest.fn() }));
@@ -39,7 +40,11 @@ jest.mock('../src/cache', () => ({
 jest.mock('../src/services/registrationService', () => ({ transferAccount: jest.fn() }));
 
 const { prisma } = require('../prismaClient');
-const { authenticateUsernameOwner } = require('../src/services/ownershipService');
+const {
+  authenticateUsernameOwner,
+  fetchAccountSigners,
+} = require('../src/services/ownershipService');
+const { verifyMultiSignerThreshold } = require('../src/multisigner-verifier');
 const { buildErrorHandler } = require('../src/middleware/errorHandler');
 const userRoutes = require('../src/routes/v1/userRoutes');
 
@@ -55,9 +60,15 @@ const buildApp = () => {
 
 const OWNER = { username: 'ada*localhost', address: 'GABC' };
 
+const PRIMARY = { key: 'GABC', weight: 1 };
+const SECONDARY = { key: 'GSECONDARY', weight: 1 };
+const MULTISIG_SIGNERS = [PRIMARY, SECONDARY];
+
 beforeEach(() => {
   jest.clearAllMocks();
   authenticateUsernameOwner.mockResolvedValue(OWNER);
+  fetchAccountSigners.mockResolvedValue(MULTISIG_SIGNERS);
+  verifyMultiSignerThreshold.mockResolvedValue({ valid: true });
   prisma.activityLog.count.mockResolvedValue(0);
   prisma.activityLog.findMany.mockResolvedValue([]);
 });
@@ -77,6 +88,64 @@ describe('GET /users/:username/activity', () => {
     });
   });
 
+  test('passes the full signer list from Horizon to the multisig verifier', async () => {
+    await request(buildApp())
+      .get('/users/ada*localhost/activity')
+      .set('X-Stellar-Signature', 'sig')
+      .set('X-Stellar-Signer', 'GABC');
+
+    expect(fetchAccountSigners).toHaveBeenCalledWith(OWNER.address);
+    expect(verifyMultiSignerThreshold).toHaveBeenCalledWith(
+      expect.objectContaining({
+        signers: MULTISIG_SIGNERS,
+        signature: 'sig',
+        signerAddress: 'GABC',
+        operation: 'activity',
+        username: 'ada*localhost',
+      }),
+    );
+  });
+
+  test('accepts a valid secondary signer on a multisig account', async () => {
+    verifyMultiSignerThreshold.mockResolvedValue({ valid: true });
+
+    const res = await request(buildApp())
+      .get('/users/ada*localhost/activity')
+      .set('X-Stellar-Signature', 'secondary-sig')
+      .set('X-Stellar-Signer', 'GSECONDARY');
+
+    expect(res.status).toBe(200);
+    expect(verifyMultiSignerThreshold).toHaveBeenCalledWith(
+      expect.objectContaining({ signerAddress: 'GSECONDARY', signers: MULTISIG_SIGNERS }),
+    );
+  });
+
+  test('rejects a signer that is not in the account signer list', async () => {
+    verifyMultiSignerThreshold.mockResolvedValue({ valid: false });
+
+    const res = await request(buildApp())
+      .get('/users/ada*localhost/activity')
+      .set('X-Stellar-Signature', 'stranger-sig')
+      .set('X-Stellar-Signer', 'GSTRANGER');
+
+    expect(res.status).toBe(401);
+    expect(prisma.activityLog.findMany).not.toHaveBeenCalled();
+  });
+
+  test('keeps working for the primary signer', async () => {
+    verifyMultiSignerThreshold.mockResolvedValue({ valid: true });
+
+    const res = await request(buildApp())
+      .get('/users/ada*localhost/activity')
+      .set('X-Stellar-Signature', 'primary-sig')
+      .set('X-Stellar-Signer', 'GABC');
+
+    expect(res.status).toBe(200);
+    expect(verifyMultiSignerThreshold).toHaveBeenCalledWith(
+      expect.objectContaining({ signerAddress: 'GABC' }),
+    );
+  });
+
   test('propagates the status of a failed ownership check', async () => {
     const denied = new Error('Signature verification failed.');
     denied.statusCode = 401;
@@ -87,6 +156,7 @@ describe('GET /users/:username/activity', () => {
       .set('X-Stellar-Signature', 'sig');
 
     expect(res.status).toBe(401);
+    expect(verifyMultiSignerThreshold).not.toHaveBeenCalled();
   });
 
   test('answers 404 when the username is not registered', async () => {
@@ -191,6 +261,9 @@ describe('GET /users/:username/activity', () => {
       .send({ signature: 'body-sig', signerAddress: 'GBODY' });
 
     expect(authenticateUsernameOwner).toHaveBeenCalledWith(
+      expect.objectContaining({ signature: 'body-sig', signerAddress: 'GBODY' }),
+    );
+    expect(verifyMultiSignerThreshold).toHaveBeenCalledWith(
       expect.objectContaining({ signature: 'body-sig', signerAddress: 'GBODY' }),
     );
   });

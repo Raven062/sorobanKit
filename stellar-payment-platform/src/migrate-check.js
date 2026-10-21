@@ -226,11 +226,75 @@ function enforceMigrationPolicy(result) {
   return { shouldExit: false };
 }
 
+/**
+ * Flushes any buffered log output before the process terminates.
+ *
+ * Under MIGRATION_POLICY=strict we exit non-zero on drift/pending migrations.
+ * In some environments (PM2, Docker with `restart: always`) the process is
+ * torn down before the buffered error line reaches disk, producing silent
+ * restart loops. Awaiting this helper guarantees the log is written first.
+ *
+ * Supports both a promise-returning `logger.flush()` and a transport that
+ * emits a 'finish' event. Resolves (never rejects) so a flush failure can
+ * never mask the intended non-zero exit.
+ *
+ * @returns {Promise<void>}
+ */
+function flushLogs() {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+
+    // Safety net: never hang startup on a stuck transport.
+    const timer = setTimeout(done, 5_000);
+    if (typeof timer.unref === 'function') timer.unref();
+
+    try {
+      if (logger && typeof logger.flush === 'function') {
+        const result = logger.flush();
+        if (result && typeof result.then === 'function') {
+          result.then(() => {
+            clearTimeout(timer);
+            done();
+          }, () => {
+            clearTimeout(timer);
+            done();
+          });
+          return;
+        }
+        clearTimeout(timer);
+        done();
+        return;
+      }
+
+      const transport = logger && (logger.transport || logger._transport);
+      if (transport && typeof transport.once === 'function') {
+        transport.once('finish', () => {
+          clearTimeout(timer);
+          done();
+        });
+        if (typeof transport.end === 'function') transport.end();
+        return;
+      }
+    } catch (_err) {
+      // Fall through to resolve; flushing must never block the exit.
+    }
+
+    clearTimeout(timer);
+    done();
+  });
+}
+
 module.exports = {
   checkMigrations,
   enforceMigrationPolicy,
   currentPolicy,
   classifyStatus,
   runMigrateStatus,
+  flushLogs,
   PRISMA_BIN,
 };
