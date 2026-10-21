@@ -53,17 +53,16 @@ export const useLatencyTracker = (apiBase = '') => {
 
   // Set up periodic checks
   useEffect(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current)
-    }
-
-    intervalRef.current = setInterval(() => {
+    const intervalId = setInterval(() => {
       checkLatency()
     }, LATENCY_CHECK_INTERVAL)
 
+    intervalRef.current = intervalId
+
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
+      clearInterval(intervalId)
+      if (intervalRef.current === intervalId) {
+        intervalRef.current = null
       }
     }
   }, [checkLatency])
