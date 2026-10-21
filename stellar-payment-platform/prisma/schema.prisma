@@ -213,6 +213,13 @@ model WebhookEvent {
 // user can review for their own username through
 // GET /users/:username/activity. Rows go away with the user so a purge does
 // not leave an orphaned trail behind.
+//
+// #182 — The `onDelete: Cascade` on the `user` relation below is the source of
+// truth for purge cleanup: the soft-delete purge cron relies on it (and also
+// deletes activity rows explicitly inside its transaction) so a purged user
+// never leaves orphaned activity_logs behind. The deployed migration history
+// must match this declaration; if a database was created before the cascade
+// was added, apply the migration that recreates the FK with ON DELETE CASCADE.
 model ActivityLog {
   id        String   @id @default(uuid())
   username  String
