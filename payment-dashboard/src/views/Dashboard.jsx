@@ -22,6 +22,26 @@ import {
   useWalletMenu,
 } from './shared';
 
+/**
+ * @typedef {Object} DashboardProps
+ * @property {string | null | undefined} [userPublicKey]
+ * @property {() => Promise<{ ok: boolean, error?: string }>} onConnectWallet
+ * @property {() => void} onDisconnectWallet
+ * @property {string | number | null | undefined} [balance]
+ * @property {boolean} [isRefreshing]
+ * @property {string | null | undefined} [balanceError]
+ * @property {() => void} onRefreshBalance
+ * @property {() => void} onRegisterClick
+ * @property {() => void} onAnalyticsClick
+ * @property {() => void} onHistoryClick
+ * @property {() => void} onHelpClick
+ * @property {(state: string) => void} onRegistrationStateChange
+ * @property {boolean} [canRegister]
+ */
+
+/**
+ * @param {DashboardProps} props
+ */
 function Dashboard({
   userPublicKey,
   onConnectWallet,
@@ -55,6 +75,7 @@ function Dashboard({
   const [nameTag, setNameTag] = useState('')
   const [showRecent, setShowRecent] = useState(false);
   const { recentAddresses, saveAddress, clearAddresses } = useRecentAddresses();
+  /** @type {import('react').RefObject<HTMLInputElement>} */
   const recipientRef = useRef(null);
   const debouncedNameTag = useDebounce(nameTag, 300)
   const [amount, setAmount] = useState('')
@@ -143,10 +164,20 @@ function Dashboard({
     [recentAddresses],
   );
 
+  /**
+   * @param {string} text
+   * @param {string} color
+   * @param {string} bgColor
+   */
   const displayMessage = (text, color, bgColor) => {
     setStatus({ text, color, bgColor });
   };
 
+  /**
+   * @param {string} text
+   * @param {string} color
+   * @param {string} bgColor
+   */
   const displayReceiveMessage = (text, color, bgColor) => {
     setReceiveStatus({ text, color, bgColor });
   };
@@ -201,7 +232,11 @@ function Dashboard({
       } catch (error){
         setReceiveAddress(userPublicKey)
         setReceiveTag('')
-        displayReceiveMessage(error.message || 'Unable to load receive details.', '#DC2626', '#FEE2E2')
+        displayReceiveMessage(
+          error instanceof Error ? error.message : 'Unable to load receive details.',
+          '#DC2626',
+          '#FEE2E2',
+        )
         onRegistrationStateChange('unknown')
       } finally {
         setIsReceiving(false);
@@ -315,7 +350,8 @@ function Dashboard({
           amount: amountStroops,
         });
       } catch (err) {
-        throw new Error(`Simulation failed: ${err.message}`, { cause: err });
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`Simulation failed: ${message}`, { cause: err });
       }
 
       toast.loading("Approve the transaction in your wallet...", { id: toastId });
@@ -325,14 +361,16 @@ function Dashboard({
           assembledTransaction.toXDR(),
         );
       } catch (err) {
-        throw new Error(`Wallet signing failed: ${err.message}`, { cause: err });
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`Wallet signing failed: ${message}`, { cause: err });
       }
 
       toast.success("Payment submitted.", { id: toastId });
       displayMessage("Payment submitted successfully.", "#059669", "#D1FAE5");
     } catch (error) {
-      toast.error(error.message || "Payment failed.", { id: toastId });
-      displayMessage(error.message || "Payment failed.", "#DC2626", "#FEE2E2");
+      const message = error instanceof Error ? error.message : "Payment failed.";
+      toast.error(message, { id: toastId });
+      displayMessage(message, "#DC2626", "#FEE2E2");
     } finally {
       setIsProcessing(false);
       setIsSubmitting(false);

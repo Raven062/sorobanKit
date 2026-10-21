@@ -40,6 +40,14 @@ export const normalizeNameTag = (value) => {
     : `${trimmed}*${DEFAULT_FEDERATION_DOMAIN}`;
 };
 
+/**
+ * @typedef {{ address?: string, tag?: string, error?: string }} ResolveRecipientResult
+ */
+
+/**
+ * @param {string} inputValue
+ * @returns {Promise<ResolveRecipientResult>}
+ */
 export const resolveRecipient = async (inputValue) => {
   const trimmed = inputValue.trim();
   if (!trimmed) {
@@ -61,6 +69,10 @@ export const resolveRecipient = async (inputValue) => {
  * The API answers `{ success: false, error: { code, message, details } }`. The
  * flat `error`/`detail`/`message` fallbacks cover responses that do not come
  * from the platform's error handler, such as a proxy or CDN error page.
+ *
+ * @param {unknown} data
+ * @param {string} fallback
+ * @returns {string}
  */
 export const apiErrorMessage = (data, fallback) => {
   if (data && typeof data === 'object') {
@@ -81,9 +93,17 @@ export const apiErrorMessage = (data, fallback) => {
   return fallback;
 };
 
-/** Field-level validation issues, when the error carries them. */
+/**
+ * Field-level validation issues, when the error carries them.
+ *
+ * @param {unknown} data
+ * @returns {unknown[]}
+ */
 export const apiErrorDetails = (data) => {
-  const details = data && data.error && data.error.details;
+  const details =
+    data && typeof data === 'object' && 'error' in data
+      ? /** @type {{ error?: { details?: unknown } }} */ (data).error?.details
+      : undefined;
   return Array.isArray(details) ? details : [];
 };
 
@@ -107,6 +127,9 @@ export const formatShortAddress = (value) => {
   return `${value.substring(0, 4)}...${value.substring(52)}`;
 };
 
+/**
+ * @returns {[boolean, import('react').Dispatch<import('react').SetStateAction<boolean>>]}
+ */
 export const useNavState = () => {
   const [isNavOpen, setIsNavOpen] = useState(() => {
     const stored = sessionStorage.getItem(NAV_STORAGE_KEY);
@@ -119,6 +142,7 @@ export const useNavState = () => {
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(max-width: 768px)');
+    /** @param {MediaQueryListEvent} event */
     const syncNav = (event) => {
       if (event.matches) {
         setIsNavOpen(false);
@@ -130,7 +154,9 @@ export const useNavState = () => {
       return () => mediaQuery.removeEventListener('change', syncNav);
     }
 
+    // @ts-expect-error - legacy MediaQueryList API for older browsers
     mediaQuery.addListener(syncNav);
+    // @ts-expect-error - legacy MediaQueryList API for older browsers
     return () => mediaQuery.removeListener(syncNav);
   }, []);
 
@@ -141,13 +167,29 @@ export const useNavState = () => {
   return [isNavOpen, setIsNavOpen];
 };
 
+/**
+ * @typedef {{
+ *   menuRef: import('react').RefObject<HTMLDivElement | null>,
+ *   isOpen: boolean,
+ *   setIsOpen: import('react').Dispatch<import('react').SetStateAction<boolean>>
+ * }} WalletMenuState
+ */
+
+/**
+ * @returns {WalletMenuState}
+ */
 export const useWalletMenu = () => {
-  const menuRef = useRef(null);
+  const menuRef = useRef(/** @type {HTMLDivElement | null} */ (null));
   const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
+    /** @param {MouseEvent} event */
     const handleClickOutside = (event) => {
-      if (menuRef.current && !menuRef.current.contains(event.target)) {
+      if (
+        menuRef.current &&
+        event.target instanceof Node &&
+        !menuRef.current.contains(event.target)
+      ) {
         setIsOpen(false);
       }
     };
@@ -160,6 +202,7 @@ export const useWalletMenu = () => {
 };
 
 // Initialize the multi-wallet kit with strictly V1 syntax
+/** @type {import('@creit.tech/stellar-wallets-kit').StellarWalletsKit} */
 export const walletKit = new StellarWalletsKit({
   network: WalletNetwork.TESTNET, 
   selectedWalletId: 'freighter',

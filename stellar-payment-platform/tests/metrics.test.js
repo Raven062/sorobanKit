@@ -290,6 +290,62 @@ describe('Prometheus Metrics Endpoint', () => {
       // The raw username value must never appear as a label value.
       expect(metricsText).not.toMatch(/route="[^"]*alice[^"]*"/);
     });
+
+    // Issue #179 — a username containing an "@" (e.g. an email-style handle)
+    // must still normalise to the template form and never leak into labels.
+    test('should normalise a username containing "@" to the route template', async () => {
+      await request(app)
+        .get('/api/v1/users/alice@domain/activity')
+        .set('X-Stellar-Signature', 'dummy-sig')
+        .set('X-Stellar-Signer', 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF');
+
+      const response = await request(app).get('/metrics');
+      const metricsText = response.text;
+
+      expect(metricsText).toMatch(/route="\/api\/v1\/users\/:username\/activity"/);
+
+      // No label value anywhere may contain the literal username.
+      expect(metricsText).not.toMatch(/route="[^"]*alice[^"]*"/);
+      expect(metricsText).not.toMatch(/route="[^"]*alice@domain[^"]*"/);
+    });
+
+    // Issue #179 — high-cardinality guard: many distinct usernames hitting the
+    // same parameterised route must collapse to a single route label.
+    test('should not create per-user route labels after 100 requests with different usernames', async () => {
+      const usernames = Array.from({ length: 100 }, (_, i) => `user${i}`);
+
+      for (const username of usernames) {
+        await request(app)
+          .get(`/api/v1/users/${username}/activity`)
+          .set('X-Stellar-Signature', 'dummy-sig')
+          .set('X-Stellar-Signer', 'GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF');
+      }
+
+      const response = await request(app).get('/metrics');
+      const metricsText = response.text;
+
+      // Collect every route label value recorded for the activity endpoint.
+      const routeLabels = new Set();
+      const routeLabelRegex = /route="([^"]*)"/g;
+      let match;
+      while ((match = routeLabelRegex.exec(metricsText)) !== null) {
+        routeLabels.add(match[1]);
+      }
+
+      // The parameterised template must be present...
+      expect(routeLabels.has('/api/v1/users/:username/activity')).toBe(true);
+
+      // ...and no concrete username may appear as a route label.
+      for (const label of routeLabels) {
+        expect(label).not.toMatch(/user\d+/);
+      }
+
+      // Only a single route label combination for the activity endpoint.
+      const activityLabels = [...routeLabels].filter((l) =>
+        l.includes('/activity'),
+      );
+      expect(activityLabels).toEqual(['/api/v1/users/:username/activity']);
+    });
   });
 
   describe('Metrics middleware integration', () => {

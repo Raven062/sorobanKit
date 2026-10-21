@@ -2,7 +2,10 @@ const express = require("express");
 const xss = require("xss");
 const { StrKey } = require("@stellar/stellar-sdk");
 const { prisma, withTransaction } = require("../../../prismaClient");
-const { verifyMultiSignerThreshold } = require("../../multisigner-verifier");
+const {
+  verifyMultiSignerThreshold,
+  fetchAccountSigners,
+} = require("../../multisigner-verifier");
 const { poolGet, poolRun, poolAll, etagCache } = require("../../db");
 const { logger } = require("../../logger");
 const { transferAccount } = require("../../services/registrationService");
@@ -471,6 +474,11 @@ router.delete(
 // webhook endpoints prove it: a signature over `activity:<username>` made with
 // the account key, passed in the X-Stellar-Signature header (or the body, as
 // the webhook routes accept it).
+//
+// #184 — Accounts may use Ed25519 multisig, so the signature is verified with
+// the multisigner verifier against the account's full signer list rather than
+// only the primary account key. Secondary signers are therefore accepted as
+// long as the signature meets the account's thresholds.
 router.get(
   "/users/:username/activity",
   validateSchema({ query: activityQuerySchema }),
@@ -483,16 +491,71 @@ router.get(
       return next(new ApiError("INVALID_INPUT", "Missing username parameter."));
     }
 
-    let owner;
+    const owner = await prisma.user.findFirst({
+      where: { username, deletedAt: null },
+      select: { username: true, address: true },
+    });
+
+    if (!owner) {
+      return next(new ApiError("NOT_FOUND", "Username not found."));
+    }
+
+    const signature = req.get("X-Stellar-Signature") || req.body?.signature;
+    const signerAddress =
+      req.get("X-Stellar-Signer") || req.body?.signerAddress;
+
+    if (!signature || !signerAddress) {
+      return next(
+        new ApiError(
+          "UNAUTHORIZED",
+          "Missing signature or signer address for ownership verification.",
+        ),
+      );
+    }
+
+    let signers;
     try {
-      owner = await authenticateUsernameOwner({
-        username,
-        signature: req.get("X-Stellar-Signature") || req.body?.signature,
-        signerAddress: req.get("X-Stellar-Signer") || req.body?.signerAddress,
-        operation: "activity",
-      });
+      signers = await fetchAccountSigners(owner.address);
     } catch (error) {
-      return next(error);
+      logger.error("Failed to fetch account signers:", error.message);
+      return next(
+        new ApiError(
+          "UNAUTHORIZED",
+          "Unable to verify ownership: account signers unavailable.",
+        ),
+      );
+    }
+
+    const signerKeys = (signers || [])
+      .map((signer) => signer.key || signer.publicKey || signer)
+      .filter((key) => typeof key === "string" && key.length > 0);
+
+    if (!signerKeys.includes(signerAddress)) {
+      return next(
+        new ApiError(
+          "UNAUTHORIZED",
+          "Signer is not authorized for this account.",
+        ),
+      );
+    }
+
+    const verification = await verifyMultiSignerThreshold(
+      owner.address,
+      signerKeys,
+      {
+        operationType: "activity",
+        providedSignatures: [signature],
+        signerAddress,
+      },
+    );
+
+    if (!verification.success) {
+      return next(
+        new ApiError(
+          "UNAUTHORIZED",
+          verification.errorMessage || "Signature verification failed.",
+        ),
+      );
     }
 
     const { range, error: dateError } = parseDateRange(req.query);

@@ -1,3 +1,6 @@
+/**
+ * @param {{ size?: string, color?: string }} props
+ */
 export default function LoadingSpinner({ size = 'w-5 h-5', color = 'text-white' }) {
   return (
     <svg

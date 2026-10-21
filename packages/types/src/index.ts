@@ -79,10 +79,14 @@ export const Errors = {
   /**
    * Recipient address is blacklisted.
    */
-  9: {message:"Blacklisted"}
+  9: {message:"Blacklisted"},
+  /**
+   * Payment amount is below the admin-configured minimum transfer amount.
+   */
+  10: {message:"AmountBelowMinimum"}
 }
 
-export type DataKey = {tag: "Admin", values: void} | {tag: "PlatformTreasury", values: void} | {tag: "FeeBps", values: void} | {tag: "FeeCap", values: void} | {tag: "Paused", values: void} | {tag: "MaxAmount", values: void} | {tag: "UserVolume", values: readonly [string]} | {tag: "UserSpending", values: readonly [string]} | {tag: "Blacklist", values: readonly [string]};
+export type DataKey = {tag: "Admin", values: void} | {tag: "PlatformTreasury", values: void} | {tag: "FeeBps", values: void} | {tag: "FeeCap", values: void} | {tag: "Paused", values: void} | {tag: "MaxAmount", values: void} | {tag: "MinAmount", values: void} | {tag: "UserVolume", values: readonly [string]} | {tag: "UserSpending", values: readonly [string]} | {tag: "Blacklist", values: readonly [string]};
 
 
 export interface Payment {
@@ -98,6 +102,17 @@ export interface UserSpending {
   last_reset_time: u64;
 }
 
+/**
+ * Tree-shakeable contract bindings.
+ *
+ * Each contract method is exposed as an individual named export that takes the
+ * `ContractClientOptions` as its first argument. Bundlers (e.g. Vite/Rollup)
+ * can therefore drop any method that isn't imported, instead of pulling in the
+ * whole contract surface via a single `Client` instance.
+ *
+ * The `Client` class is still exported for backwards compatibility, but
+ * consumers should prefer the named exports.
+ */
 export interface Client {
   /**
    * Construct and simulate a get_fee transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -161,6 +176,12 @@ export interface Client {
    * Updates the fee basis points. Admin-only.
    */
   set_fee_bps: ({new_fee_bps}: {new_fee_bps: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+
+  /**
+   * Construct and simulate a set_min_amount transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
+   * Updates the minimum transfer amount accepted by `route_payment`. Admin-only.
+   */
+  set_min_amount: ({amount}: {amount: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
   /**
    * Construct and simulate a route_payment transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -279,6 +300,7 @@ export class Client extends ContractClient {
         "AAAAAAAAAH9PbmUtdGltZSBzZXR1cDogcmVjb3JkcyB0aGUgYWRtaW4gYW5kIHRoZSBpbml0aWFsIGZlZSBjb25maWd1cmF0aW9uCmluIGluc3RhbmNlIHN0b3JhZ2UuIE11c3QgYmUgY2FsbGVkIGJlZm9yZSBgcm91dGVfcGF5bWVudGAuAAAAAAppbml0aWFsaXplAAAAAAAFAAAAAAAAAAVhZG1pbgAAAAAAABMAAAAAAAAAEXBsYXRmb3JtX3RyZWFzdXJ5AAAAAAAAEwAAAAAAAAAHZmVlX2JwcwAAAAALAAAAAAAAAAdmZWVfY2FwAAAAAAsAAAAAAAAACm1heF9hbW91bnQAAAAAAAsAAAABAAAD6QAAA+0AAAAAAAAAAw==",
         "AAAAAAAAACJBbGlhcyBmb3IgYHNldF9wYXVzZWAuIEFkbWluLW9ubHkuAAAAAAAKc2V0X3BhdXNlZAAAAAAAAQAAAAAAAAAGcGF1c2VkAAAAAAABAAAAAQAAA+kAAAPtAAAAAAAAAAM=",
         "AAAAAAAAAClVcGRhdGVzIHRoZSBmZWUgYmFzaXMgcG9pbnRzLiBBZG1pbi1vbmx5LgAAAAAAAAtzZXRfZmVlX2JwcwAAAAABAAAAAAAAAAtuZXdfZmVlX2JwcwAAAAALAAAAAQAAA+kAAAPtAAAAAAAAAAM=",
+        "AAAAAAAAAEZVcGRhdGVzIHRoZSBtaW5pbXVtIHRyYW5zZmVyIGFtb3VudCBhY2NlcHRlZCBieSBgcm91dGVfcGF5bWVudGAuIEFkbWluLW9ubHkuAAAAAAAOc2V0X21pbl9hbW91bnQAAAAAAAEAAAAAAAAABmFtb3VudAAAAAAACwAAAAEAAAPpAAAD7QAAAAAAAAAD",
         "AAAAAAAAAEhSb3V0ZXMgYSBwYXltZW50IGZyb20gYSBzZW5kZXIgdG8gYSByZWNpcGllbnQsIGRlZHVjdGluZyBhIHBsYXRmb3JtIGZlZS4AAAANcm91dGVfcGF5bWVudAAAAAAAAAQAAAAAAAAABnNlbmRlcgAAAAAAEwAAAAAAAAAJcmVjaXBpZW50AAAAAAAAEwAAAAAAAAANdG9rZW5fYWRkcmVzcwAAAAAAABMAAAAAAAAABmFtb3VudAAAAAAACwAAAAEAAAPpAAAD7QAAAAAAAAAD",
         "AAAAAAAAACpSZXR1cm5zIHdoZXRoZXIgYW4gYWRkcmVzcyBpcyBibGFja2xpc3RlZC4AAAAAAA5pc19ibGFja2xpc3RlZAAAAAAAAQAAAAAAAAAHYWRkcmVzcwAAAAATAAAAAQAAAAE=",
         "AAAAAAAAAE9SZWNvdmVycyB0b2tlbnMgYWNjaWRlbnRhbGx5IHNlbnQgZGlyZWN0bHkgdG8gdGhlIGNvbnRyYWN0IGFkZHJlc3MuIEFkbWluLW9ubHkuAAAAAA5yZWNvdmVyX3Rva2VucwAAAAAAAgAAAAAAAAAFdG9rZW4AAAAAAAATAAAAAAAAAAZhbW91bnQAAAAAAAsAAAABAAAD6QAAA+0AAAAAAAAAAw==",
@@ -308,6 +330,7 @@ export class Client extends ContractClient {
         initialize: this.txFromJSON<Result<void>>,
         set_paused: this.txFromJSON<Result<void>>,
         set_fee_bps: this.txFromJSON<Result<void>>,
+        set_min_amount: this.txFromJSON<Result<void>>,
         route_payment: this.txFromJSON<Result<void>>,
         is_blacklisted: this.txFromJSON<boolean>,
         recover_tokens: this.txFromJSON<Result<void>>,
@@ -323,4 +346,317 @@ export class Client extends ContractClient {
         set_fee_config_legacy: this.txFromJSON<Result<void>>,
         set_platform_treasury: this.txFromJSON<Result<void>>
   }
+}
+
+/**
+ * Returns the current protocol fee percentage in basis points.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function get_fee(
+  options: ContractClientOptions,
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<i128>> {
+  return new Client(options).get_fee(methodOptions)
+}
+
+/**
+ * Replaces this contract's WASM with a previously uploaded version. Admin-only.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function upgrade(
+  options: ContractClientOptions,
+  args: {new_wasm_hash: Buffer},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).upgrade(args, methodOptions)
+}
+
+/**
+ * Returns the contract version.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function version(
+  options: ContractClientOptions,
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<u32>> {
+  return new Client(options).version(methodOptions)
+}
+
+/**
+ * Returns the semantic version string of this contract matching the version
+ * declared in Cargo.toml (e.g. "0.1.0"). Use this after an upgrade to
+ * confirm the expected API version before any state-mutating operations.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function get_version(
+  options: ContractClientOptions,
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<string>> {
+  return new Client(options).get_version(methodOptions)
+}
+
+/**
+ * Returns whether the contract is currently paused.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function is_paused(
+  options: ContractClientOptions,
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<boolean>> {
+  return new Client(options).is_paused(methodOptions)
+}
+
+/**
+ * Set a new admin. Gated by the current admin if one exists.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function set_admin(
+  options: ContractClientOptions,
+  args: {new_admin: string},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).set_admin(args, methodOptions)
+}
+
+/**
+ * Pauses or unpauses the payment router. Admin-only.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function set_pause(
+  options: ContractClientOptions,
+  args: {paused: boolean},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).set_pause(args, methodOptions)
+}
+
+/**
+ * One-time setup: records the admin and the initial fee configuration
+ * in instance storage. Must be called before `route_payment`.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function initialize(
+  options: ContractClientOptions,
+  args: {admin: string, platform_treasury: string, fee_bps: i128, fee_cap: i128, max_amount: i128},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).initialize(args, methodOptions)
+}
+
+/**
+ * Alias for `set_pause`. Admin-only.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function set_paused(
+  options: ContractClientOptions,
+  args: {paused: boolean},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).set_paused(args, methodOptions)
+}
+
+/**
+ * Updates the fee basis points. Admin-only.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function set_fee_bps(
+  options: ContractClientOptions,
+  args: {new_fee_bps: i128},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).set_fee_bps(args, methodOptions)
+}
+
+/**
+ * Routes a payment from a sender to a recipient, deducting a platform fee.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function route_payment(
+  options: ContractClientOptions,
+  args: {sender: string, recipient: string, token_address: string, amount: i128},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).route_payment(args, methodOptions)
+}
+
+/**
+ * Returns whether an address is blacklisted.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function is_blacklisted(
+  options: ContractClientOptions,
+  args: {address: string},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<boolean>> {
+  return new Client(options).is_blacklisted(args, methodOptions)
+}
+
+/**
+ * Recovers tokens accidentally sent directly to the contract address. Admin-only.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function recover_tokens(
+  options: ContractClientOptions,
+  args: {token: string, amount: i128},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).recover_tokens(args, methodOptions)
+}
+
+/**
+ * Routes multiple payments in a single transaction. If any payment fails,
+ * the entire batch is reverted atomically.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function route_payments(
+  options: ContractClientOptions,
+  args: {payments: Array<Payment>},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).route_payments(args, methodOptions)
+}
+
+/**
+ * Alias for `set_fee_config_legacy`. Admin-only.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function set_fee_config(
+  options: ContractClientOptions,
+  args: {fee_bps: i128, fee_cap: i128},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).set_fee_config(args, methodOptions)
+}
+
+/**
+ * Transfers admin rights to a new address. Requires the current admin's authorization.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function transfer_admin(
+  options: ContractClientOptions,
+  args: {new_admin: string},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).transfer_admin(args, methodOptions)
+}
+
+/**
+ * Returns the cumulative amount a given sender has routed through the contract.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function get_user_volume(
+  options: ContractClientOptions,
+  args: {user: string},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<i128>> {
+  return new Client(options).get_user_volume(args, methodOptions)
+}
+
+/**
+ * Adds an address to the blacklist. Admin-only.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function blacklist_address(
+  options: ContractClientOptions,
+  args: {address: string},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).blacklist_address(args, methodOptions)
+}
+
+/**
+ * Admin-only emergency withdrawal of tokens held by this contract.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function emergency_withdraw(
+  options: ContractClientOptions,
+  args: {token: string, amount: i128},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).emergency_withdraw(args, methodOptions)
+}
+
+/**
+ * Records a token as supported (no-op; routing accepts any token contract ID).
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function add_supported_token(
+  options: ContractClientOptions,
+  args: {_token: string},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).add_supported_token(args, methodOptions)
+}
+
+/**
+ * Removes an address from the blacklist. Admin-only.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function unblacklist_address(
+  options: ContractClientOptions,
+  args: {address: string},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).unblacklist_address(args, methodOptions)
+}
+
+/**
+ * Returns the effective fee_bps for a sender after applying any
+ * volume-based tiered discount.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function get_effective_fee_bps(
+  options: ContractClientOptions,
+  args: {sender: string},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<i128>> {
+  return new Client(options).get_effective_fee_bps(args, methodOptions)
+}
+
+/**
+ * Updates the fee basis points and fee cap. Admin-only.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function set_fee_config_legacy(
+  options: ContractClientOptions,
+  args: {fee_bps: i128, fee_cap: i128},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).set_fee_config_legacy(args, methodOptions)
+}
+
+/**
+ * Updates the treasury address that receives the platform fee. Admin-only.
+ *
+ * Tree-shakeable named export. Pass the client options as the first argument.
+ */
+export async function set_platform_treasury(
+  options: ContractClientOptions,
+  args: {new_treasury: string},
+  methodOptions?: MethodOptions
+): Promise<AssembledTransaction<Result<void>>> {
+  return new Client(options).set_platform_treasury(args, methodOptions)
 }

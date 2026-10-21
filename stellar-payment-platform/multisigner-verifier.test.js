@@ -328,6 +328,110 @@ describe('Multi-Signer Verification Module', () => {
       expect(result.signatureCount).toBe(1); // Deduplicated
       expect(result.totalWeight).toBe(2);
     });
+
+    it('should verify a secondary signer for activity operations', async () => {
+      const signer2 = 'GCMYSPHFP3L5SDIYBHWHQJVAKQQQC47PGP4TQMJUFAXTVXLKBF3KYQCF';
+      const mockAccount = {
+        id: accountId,
+        signers: [
+          { key: accountId, weight: 1, signer_type: 'ed25519_public_key' },
+          { key: signer2, weight: 1, signer_type: 'ed25519_public_key' }
+        ],
+        thresholds: { low_threshold: 1, med_threshold: 2, high_threshold: 3 },
+        sequence: '123456789',
+        balances: [],
+      };
+
+      loadAccount.mockResolvedValue(mockAccount);
+
+      const result = await verifyMultiSignerThreshold(
+        accountId,
+        [signer2],
+        { operationType: 'activity' }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.totalWeight).toBe(1);
+      expect(result.requiredThreshold).toBe(1);
+      expect(result.operationType).toBe('activity');
+      expect(result.errorMessage).toBe(null);
+    });
+
+    it('should verify a secondary signer when passed the full signer list', async () => {
+      const signer2 = 'GCMYSPHFP3L5SDIYBHWHQJVAKQQQC47PGP4TQMJUFAXTVXLKBF3KYQCF';
+      const signers = [
+        { key: accountId, weight: 1, signer_type: 'ed25519_public_key' },
+        { key: signer2, weight: 1, signer_type: 'ed25519_public_key' }
+      ];
+      const mockAccount = {
+        id: accountId,
+        signers,
+        thresholds: { low_threshold: 1, med_threshold: 2, high_threshold: 3 },
+        sequence: '123456789',
+        balances: [],
+      };
+
+      loadAccount.mockResolvedValue(mockAccount);
+
+      const result = await verifyMultiSignerThreshold(
+        accountId,
+        [signer2],
+        { operationType: 'activity', signers }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.totalWeight).toBe(1);
+      expect(result.requiredThreshold).toBe(1);
+    });
+
+    it('should reject an unknown signer for activity operations', async () => {
+      const mockAccount = {
+        id: accountId,
+        signers: [
+          { key: accountId, weight: 1, signer_type: 'ed25519_public_key' }
+        ],
+        thresholds: { low_threshold: 1, med_threshold: 2, high_threshold: 3 },
+        sequence: '123456789',
+        balances: [],
+      };
+
+      loadAccount.mockResolvedValue(mockAccount);
+
+      const result = await verifyMultiSignerThreshold(
+        accountId,
+        ['GCMYSPHFP3L5SDIYBHWHQJVAKQQQC47PGP4TQMJUFAXTVXLKBF3KYQCF'],
+        { operationType: 'activity' }
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.totalWeight).toBe(0);
+      expect(result.errorMessage).toContain('Insufficient signing weight');
+    });
+
+    it('should still verify the primary signer for activity operations', async () => {
+      const signer2 = 'GCMYSPHFP3L5SDIYBHWHQJVAKQQQC47PGP4TQMJUFAXTVXLKBF3KYQCF';
+      const mockAccount = {
+        id: accountId,
+        signers: [
+          { key: accountId, weight: 1, signer_type: 'ed25519_public_key' },
+          { key: signer2, weight: 1, signer_type: 'ed25519_public_key' }
+        ],
+        thresholds: { low_threshold: 1, med_threshold: 2, high_threshold: 3 },
+        sequence: '123456789',
+        balances: [],
+      };
+
+      loadAccount.mockResolvedValue(mockAccount);
+
+      const result = await verifyMultiSignerThreshold(
+        accountId,
+        [accountId],
+        { operationType: 'activity' }
+      );
+
+      expect(result.success).toBe(true);
+      expect(result.totalWeight).toBe(1);
+    });
   });
 
   describe('verifyMultiSignerThreshold sequence number check', () => {
