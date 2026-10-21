@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { Suspense, lazy } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import AnalyticsPage from './AnalyticsPage';
@@ -65,5 +66,47 @@ describe('AnalyticsPage', () => {
     await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
     expect(fetchMock.mock.calls.length).toBeGreaterThan(callsBeforeRetry);
     expect(screen.getByText('Flow volume')).toBeTruthy();
+  });
+
+  it('shows the loading fallback while the lazy AnalyticsPage chunk loads', async () => {
+    let resolveImport;
+    const importPromise = new Promise((resolve) => {
+      resolveImport = resolve;
+    });
+
+    const LazyAnalyticsPage = lazy(() => importPromise.then(() => ({ default: AnalyticsPage })));
+
+    render(
+      <Suspense fallback={<div role="status">Loading analytics...</div>}>
+        <LazyAnalyticsPage
+          userPublicKey={null}
+          onConnectWallet={noop}
+          onDisconnectWallet={noop}
+          onDashboardClick={noop}
+          onHistoryClick={noop}
+          onHelpClick={noop}
+          onRegisterClick={noop}
+          canRegister={false}
+        />
+      </Suspense>,
+    );
+
+    expect(screen.getByRole('status').textContent).toBe('Loading analytics...');
+    expect(screen.queryByText('Flow volume')).toBeNull();
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ _embedded: { records: [] } }),
+    }));
+    vi.stubGlobal('matchMedia', () => ({
+      matches: true,
+      addListener: noop,
+      removeListener: noop,
+    }));
+
+    resolveImport();
+
+    await waitFor(() => expect(screen.queryByRole('status')).toBeNull());
+    expect(await screen.findByText('Flow volume')).toBeTruthy();
   });
 });

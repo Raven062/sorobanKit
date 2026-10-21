@@ -39,6 +39,13 @@ export default defineConfig(({ mode }) => ({
   },
   build: {
     chunkSizeWarningLimit: 1100,
+    // No `manualChunks` is defined on purpose: the Analytics page (and its
+    // charting library) is loaded via React.lazy(() => import(...)), so
+    // Rollup's default behaviour emits it as a separate on-demand chunk
+    // instead of inlining it into the initial bundle. Forcing all vendor
+    // code into one chunk would defeat that split. Verify with
+    // `npm run analyze` (dist/stats.html) that the charting library lives in
+    // its own chunk.
     // Files in public/ (robots.txt, sitemap.xml, favicons, …) are copied
     // verbatim to the build output root by Vite's default behaviour.
     // The explicit `publicDir` declaration below makes this intent clear and

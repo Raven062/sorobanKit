@@ -296,6 +296,42 @@ const [activeView, setActiveView] = useState('dashboard')
     );
   }
 
+  if (activeView === "analytics") {
+    return (
+      <>
+        {isOffline && (
+          <div
+            style={{
+              backgroundColor: "#DC2626",
+              color: "#FFFFFF",
+              padding: "12px 16px",
+              textAlign: "center",
+              fontWeight: "500",
+              fontSize: "14px",
+              position: "sticky",
+              top: 0,
+              zIndex: 1000,
+            }}
+          >
+            ⚠️ You are currently offline. Transactions will fail.
+          </div>
+        )}
+        <Suspense fallback={<ViewFallback label="Loading analytics..." />}>
+          <AnalyticsPage
+            userPublicKey={userPublicKey}
+            onConnectWallet={handleConnectWallet}
+            onDisconnectWallet={handleDisconnectWallet}
+            onDashboardClick={() => handleNavigate("dashboard")}
+            onHistoryClick={() => handleNavigate("history")}
+            onHelpClick={() => handleNavigate("help")}
+            onRegisterClick={() => handleNavigate("register")}
+            canRegister={registrationState !== "existing"}
+          />
+        </Suspense>
+      </>
+    );
+  }
+
   return (
     <>
       {isOffline && (
