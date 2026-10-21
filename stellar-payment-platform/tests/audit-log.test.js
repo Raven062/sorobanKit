@@ -66,6 +66,7 @@ const {
   extractUserId,
   extractIpAddress,
   createAuditLogMiddleware,
+  SENSITIVE_KEYS,
 } = require('../src/middleware/auditLog');
 
 describe('Admin Audit Logging System', () => {
@@ -119,6 +120,49 @@ describe('Admin Audit Logging System', () => {
       expect(redacted.admin.tokens[0].token).toBe('[REDACTED]');
       expect(redacted.admin.tokens[1].token).toBe('[REDACTED]');
       expect(redacted.admin.tokens[1].name).toBe('api-token');
+    });
+
+    it('redacts a deeply nested password field', () => {
+      const input = { user: { profile: { password: 'hunter2', name: 'Alice' } } };
+
+      const redacted = redactSensitiveData(input);
+      expect(redacted.user.profile.password).toBe('[REDACTED]');
+      expect(redacted.user.profile.name).toBe('Alice');
+    });
+
+    it('redacts sensitive keys in arrays of objects while preserving other fields', () => {
+      const input = {
+        tokens: [
+          { token: 'a' },
+          { token: 'b', name: 'api-token' },
+        ],
+      };
+
+      const redacted = redactSensitiveData(input);
+      expect(redacted.tokens[0].token).toBe('[REDACTED]');
+      expect(redacted.tokens[1].token).toBe('[REDACTED]');
+      expect(redacted.tokens[1].name).toBe('api-token');
+    });
+
+    it('does not mutate the original input object', () => {
+      const input = { user: { password: 'hunter2' } };
+      redactSensitiveData(input);
+      expect(input.user.password).toBe('hunter2');
+    });
+
+    it('exposes the shared SENSITIVE_KEYS constant with the expected keys', () => {
+      expect(Array.isArray(SENSITIVE_KEYS)).toBe(true);
+      expect(SENSITIVE_KEYS).toEqual(
+        expect.arrayContaining([
+          'password',
+          'secret',
+          'apiKey',
+          'token',
+          'signature',
+          'privateKey',
+          'seed',
+        ])
+      );
     });
 
     it('handles primitive, null, and undefined values safely', () => {

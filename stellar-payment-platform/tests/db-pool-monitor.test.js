@@ -186,6 +186,44 @@ describe('DB Pool Monitor', () => {
     });
   });
 
+  describe('monitoring availability', () => {
+    it('sets db_pool_monitoring_available to 0 and warns when $metrics is absent', () => {
+      const prismaWithoutMetrics = {};
+
+      mockLogger.warn.mockClear();
+      mockLogger.info.mockClear();
+
+      const handle = schedulePoolMonitoring(prismaWithoutMetrics);
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining('metrics')
+      );
+      expect(handle).toBeDefined();
+      expect(handle.stop).toEqual(expect.any(Function));
+
+      handle.stop();
+    });
+
+    it('sets db_pool_monitoring_available to 1 when $metrics is present', () => {
+      mockPrisma.$metrics.json.mockResolvedValue({
+        counters: [],
+        histograms: [],
+        gauges: [],
+      });
+
+      mockLogger.warn.mockClear();
+      mockLogger.info.mockClear();
+
+      const handle = schedulePoolMonitoring(mockPrisma);
+
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        expect.stringContaining('Pool monitor started')
+      );
+
+      handle.stop();
+    });
+  });
+
   describe('schedulePoolMonitoring', () => {
     it('runs an immediate check and schedules periodic checks', () => {
       mockPrisma.$metrics.json.mockResolvedValue({
