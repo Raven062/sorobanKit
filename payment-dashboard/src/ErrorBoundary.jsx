@@ -1,15 +1,44 @@
 import { Component } from 'react'
 
+/**
+ * @typedef {Object} ErrorBoundaryProps
+ * @property {import('react').ReactNode} [children]
+ * @property {string} [errorMessage]
+ * @property {string} [retryLabel]
+ * @property {() => void} [onRetry]
+ */
+
+/**
+ * @typedef {Object} ErrorBoundaryState
+ * @property {boolean} hasError
+ * @property {Error | null} error
+ */
+
+/**
+ * @extends {Component<ErrorBoundaryProps, ErrorBoundaryState>}
+ */
 class ErrorBoundary extends Component {
+  /**
+   * @param {ErrorBoundaryProps} props
+   */
   constructor(props) {
     super(props)
+    /** @type {ErrorBoundaryState} */
     this.state = { hasError: false, error: null }
   }
 
+  /**
+   * @param {Error} error
+   * @returns {Partial<ErrorBoundaryState>}
+   */
   static getDerivedStateFromError(error) {
     return { hasError: true, error }
   }
 
+  /**
+   * @param {Error} error
+   * @param {import('react').ErrorInfo} errorInfo
+   */
   componentDidCatch(error, errorInfo) {
     console.error('Unhandled error caught by ErrorBoundary:', error, errorInfo)
   }

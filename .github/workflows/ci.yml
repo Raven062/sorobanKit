@@ -114,7 +114,10 @@ jobs:
           
       - name: Install Frontend Dependencies
         run: npm install --legacy-peer-deps
-        
+
+      - name: Typecheck (Fails on TypeScript/JSDoc Errors)
+        run: npm run typecheck
+
       - name: Verify Vite Build (Catches Vercel Crashes)
         run: npm run build
 

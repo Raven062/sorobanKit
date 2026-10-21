@@ -24,6 +24,11 @@ jobs:
           cd payment-dashboard
           npm install --legacy-peer-deps
 
+      - name: Typecheck
+        run: |
+          cd payment-dashboard
+          npm run typecheck
+
       - name: Build
         run: |
           cd payment-dashboard

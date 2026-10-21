@@ -11,32 +11,10 @@ const AnalyticsPage = lazy(() => import('./views/AnalyticsPage.jsx'));
 const HistoryPage = lazy(() => import('./views/HistoryPage.jsx'));
 const RegistrationPage = lazy(() => import('./views/RegistrationPage.jsx'));
 
-const WALLET_STORAGE_KEY = 'stellar.wallet.publicKey';
-
-function readStoredWalletKey() {
-  try {
-    return localStorage.getItem(WALLET_STORAGE_KEY) || '';
-  } catch (err) {
-    return '';
-  }
-}
-
-function persistWalletKey(publicKey) {
-  try {
-    localStorage.setItem(WALLET_STORAGE_KEY, publicKey);
-  } catch (err) {
-    logger.error('Failed to persist wallet key:', err);
-  }
-}
-
-function clearStoredWalletKey() {
-  try {
-    localStorage.removeItem(WALLET_STORAGE_KEY);
-  } catch (err) {
-    logger.error('Failed to clear stored wallet key:', err);
-  }
-}
-
+/**
+ * Generate a unique request identifier.
+ * @returns {string}
+ */
 function generateRequestId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -49,6 +27,12 @@ function generateRequestId() {
   });
 }
 
+/**
+ * Perform a fetch request with an X-Request-ID header.
+ * @param {RequestInfo | URL} input
+ * @param {RequestInit} [init]
+ * @returns {Promise<Response>}
+ */
 function withRequestId(input, init = {}) {
   const headers = new Headers(init.headers || {});
   if (!headers.has('X-Request-ID')) {
@@ -58,6 +42,9 @@ function withRequestId(input, init = {}) {
   return fetch(input, { ...init, headers });
 }
 
+/**
+ * @param {{ label?: string }} props
+ */
 function ViewFallback({ label = 'Loading view...' }) {
   return (
     <div className="route-fallback" role="status" aria-live="polite">
@@ -223,6 +210,7 @@ const [activeView, setActiveView] = useState('dashboard')
         onWalletSelected: async (option) => {
           try {
             walletKit.setWallet(option.id);
+            /** @type {Promise<never>} */
             const timeoutPromise = new Promise((_, reject) =>
               setTimeout(() => reject(new Error('Wallet connection timed out')), WALLET_TIMEOUT_MS)
             );
@@ -268,6 +256,7 @@ const [activeView, setActiveView] = useState('dashboard')
     setBalance(null);
   };
 
+  /** @type {[number | null, (value: number | null) => void]} */
   const [balance, setBalance] = useState(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [balanceError, setBalanceError] = useState("");
@@ -289,7 +278,7 @@ const [activeView, setActiveView] = useState('dashboard')
       setBalance(value ? Number(value) : null);
     } catch (error) {
       setBalance(null);
-      setBalanceError(error.message || "Unable to load balance.");
+      setBalanceError(error instanceof Error ? error.message : "Unable to load balance.");
     } finally {
       setIsRefreshing(false);
     }
@@ -336,6 +325,9 @@ const [activeView, setActiveView] = useState('dashboard')
     return () => window.removeEventListener("hashchange", syncView);
   }, []);
 
+  /**
+   * @param {string} view
+   */
   const handleNavigate = useCallback((view) => {
     setActiveView(view);
     if (view === "register") {
@@ -399,6 +391,9 @@ const [activeView, setActiveView] = useState('dashboard')
   }, [handleNavigate]);
 
   const handleRegistrationStateChange = useCallback(
+    /**
+     * @param {string} nextState
+     */
     (nextState) => {
       setRegistrationState(nextState);
 

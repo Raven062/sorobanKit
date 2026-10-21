@@ -3,6 +3,20 @@ import ScrollToTop from '../ScrollToTop';
 import MobileNav from './MobileNav';
 import { NAV_STORAGE_KEY, useNavState } from './shared';
 
+/**
+ * @typedef {Object} HelpPageProps
+ * @property {string | null | undefined} [userPublicKey]
+ * @property {() => void} onDisconnectWallet
+ * @property {() => void} onDashboardClick
+ * @property {() => void} onAnalyticsClick
+ * @property {() => void} onHistoryClick
+ * @property {() => void} onRegisterClick
+ * @property {boolean} canRegister
+ */
+
+/**
+ * @param {HelpPageProps} props
+ */
 function HelpPage({
   userPublicKey,
   onDisconnectWallet,
@@ -13,6 +27,7 @@ function HelpPage({
   canRegister,
 }) {
   const [isNavOpen, setIsNavOpen] = useNavState();
+  /** @type {[string, (value: string | ((prev: string) => string)) => void]} */
   const [activeHelpAction, setActiveHelpAction] = useState("");
   const [faqItems, setFaqItems] = useState([]);
   const [isFaqLoading, setIsFaqLoading] = useState(true);
@@ -55,12 +70,53 @@ function HelpPage({
     sessionStorage.setItem(NAV_STORAGE_KEY, "false");
     setIsNavOpen(false);
   };
+  /** @param {() => void} action */
   const handleNav = (action) => {
     sessionStorage.setItem(NAV_STORAGE_KEY, "false");
     setIsNavOpen(false);
     action();
   };
 
+  /** @type {Record<string, import('react').ReactNode>} */
+  const helpContent = {
+    identity: (
+      <div className="help-action-content">
+        <p>
+          Our platform uses a Federation Server. This acts as a decentralized
+          phonebook that maps your easy-to-read name tag directly to your
+          cryptographic public key.
+        </p>
+        <div className="help-action-block">
+          <strong>The Process:</strong>
+          <ol>
+            <li>Navigate to the Profile page.</li>
+            <li>Connect your Freighter Wallet to verify ownership.</li>
+            <li>Enter your desired username and click Claim.</li>
+          </ol>
+        </div>
+        <p className="help-action-note">
+          Note: Once claimed, your name tag is permanent and can be shared with
+          anyone on the network to receive instant payments.
+        </p>
+      </div>
+    ),
+    troubleshooting: (
+      <div className="help-action-content">
+        <p>
+          <strong>Simulation Failed:</strong> If the dashboard says "Simulation
+          Failed," it usually means the smart contract rejected the logic.
+          Ensure you aren't trying to send more XLM than you actually have in
+          your balance (including the 0.4% fee, capped at 30 XLM).
+        </p>
+        <p>
+          <strong>Wallet Locked:</strong> If the Freighter popup doesn't appear,
+          check the extension icon in your browser. If it has a red dot or says
+          "Locked," you must re-enter your password before the dashboard can
+          request a signature.
+        </p>
+      </div>
+    ),
+  };
   return (
     <div className={`dashboard ${isNavOpen ? "nav-open" : ""}`}>
       <button

@@ -8,19 +8,22 @@ const debugEnabled = import.meta.env.VITE_DEBUG === 'true';
 
 // Simple pino configuration for the frontend
 const logger = pino({
-  level: debugEnabled ? 'debug' : 'error',
+  level: /** @type {any} */ (import.meta).env.PROD ? 'info' : 'debug',
   browser: {
     asObject: true
   },
   base: {
     service: 'stellar-payment-platform',
-    version: pkg.version
+    version: /** @type {{ version: string }} */ (pkg).version
   }
 });
 
-// Generate a UUID v4 for request correlation. Uses the native
-// crypto.randomUUID when available and falls back to a manual
-// implementation for older browsers / non-secure contexts.
+/**
+ * Generate a UUID v4 for request correlation. Uses the native
+ * crypto.randomUUID when available and falls back to a manual
+ * implementation for older browsers / non-secure contexts.
+ * @returns {string}
+ */
 export function uuid() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -32,8 +35,12 @@ export function uuid() {
   });
 }
 
-// Attach an X-Request-ID header to outgoing API requests so a frontend
-// action can be correlated with backend log entries.
+/**
+ * Attach an X-Request-ID header to outgoing API requests so a frontend
+ * action can be correlated with backend log entries.
+ * @param {Record<string, string>} [headers]
+ * @returns {Record<string, string>}
+ */
 export function withRequestId(headers = {}) {
   return { ...headers, 'X-Request-ID': uuid() };
 }
