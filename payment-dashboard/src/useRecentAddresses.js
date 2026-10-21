@@ -26,6 +26,10 @@ function readFromStorage() {
  * "recent_transactions" key.  The most-recently-used entry always
  * appears first.
  *
+ * Cleanup audit: this hook uses only useState/useCallback and synchronous
+ * localStorage access. It starts no intervals, timeouts, or subscriptions,
+ * so no unmount cleanup is required.
+ *
  * @returns {{ recentAddresses: string[], saveAddress: (address: string) => void, clearAddresses: () => void }}
  */
 export function useRecentAddresses() {
