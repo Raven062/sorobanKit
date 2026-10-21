@@ -99,34 +99,25 @@ const registerBodySchema = z
   })
   .loose();
 
-/** GET /federation query. */
+/**
+ * GET /federation query.
+ *
+ * `q` must be a federation address of the form <username>*<domain>: a
+ * non-empty string of at most 255 characters containing exactly one `*`
+ * separator with non-empty parts on both sides. Validating the shape here
+ * gives a deterministic INVALID_INPUT 400 before any database round-trip.
+ */
 const federationQuerySchema = z
   .object({
     q: z
       .string({ error: "Missing 'q' parameter" })
       .trim()
       .min(1, "Missing 'q' parameter")
-      .max(256)
-      .superRefine((value, ctx) => {
-        // When the request is a name lookup (no type=id), the q parameter must
-        // follow the federation address format: <username>*<domain>.
-        // Reject queries that are missing the * separator, have an empty
-        // username part (e.g. "*domain"), or have an empty domain part
-        // (e.g. "alice*").  type=id queries pass a raw Stellar address, so
-        // only apply the check when the value looks like a name (contains *).
-        if (value.includes('*')) {
-          const starIndex = value.indexOf('*');
-          const username = value.slice(0, starIndex);
-          const domain = value.slice(starIndex + 1);
-          if (username.length === 0 || domain.length === 0) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              message:
-                "Invalid federation address format. Expected <username>*<domain> (e.g. alice*example.com)",
-            });
-          }
-        }
-      }),
+      .max(255, "'q' must be 255 characters or less")
+      .regex(
+        /^[^*]+\*[^*]+$/,
+        "Invalid federation address format. Expected <username>*<domain> (e.g. alice*example.com)",
+      ),
     type: z
       .enum(['id', 'name'], "Unsupported query type. Supported types: 'id', 'name'")
       .optional(),
