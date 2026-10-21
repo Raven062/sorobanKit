@@ -14,6 +14,28 @@ import {
   useWalletMenu,
 } from './shared';
 
+/**
+ * @typedef {Object} AnalyticsMetrics
+ * @property {number | null} routingVolume
+ * @property {number | null} avgConfirmation
+ * @property {number | null} successRate
+ */
+
+/**
+ * @typedef {Object} AnalyticsPageProps
+ * @property {string | null | undefined} [userPublicKey]
+ * @property {() => Promise<void> | void} onConnectWallet
+ * @property {() => void} onDisconnectWallet
+ * @property {() => void} onDashboardClick
+ * @property {() => void} onHistoryClick
+ * @property {() => void} onHelpClick
+ * @property {() => void} onRegisterClick
+ * @property {boolean} [canRegister]
+ */
+
+/**
+ * @param {AnalyticsPageProps} props
+ */
 function AnalyticsPage({
   userPublicKey,
   onConnectWallet,
@@ -26,11 +48,13 @@ function AnalyticsPage({
 }) {
   const [isNavOpen, setIsNavOpen] = useNavState();
   const [isConnecting, setIsConnecting] = useState(false);
+  /** @type {[AnalyticsMetrics, (value: AnalyticsMetrics) => void]} */
   const [analyticsMetrics, setAnalyticsMetrics] = useState({
     routingVolume: null,
     avgConfirmation: null,
     successRate: null,
   });
+  /** @type {[string | null, (value: string | null) => void]} */
   const [loadError, setLoadError] = useState(null);
   const [retryCount, setRetryCount] = useState(0);
   const {
@@ -59,8 +83,14 @@ function AnalyticsPage({
 
   useEffect(() => {
     let isActive = true;
+    /** @type {AbortController | null} */
     let currentController = null;
 
+    /**
+     * @param {string} url
+     * @param {AbortSignal} signal
+     * @returns {Promise<any>}
+     */
     const fetchHorizon = async (url, signal) => {
       const response = await fetch(url, { signal, cache: "no-store" });
       if (!response.ok) {
@@ -70,7 +100,13 @@ function AnalyticsPage({
       return response.json();
     };
 
+    /**
+     * @param {number} sinceMs
+     * @param {AbortSignal} signal
+     * @returns {Promise<number | null>}
+     */
     const loadRoutingVolume = async (sinceMs, signal) => {
+      /** @type {string | undefined} */
       let url = `${HORIZON_BASE}/payments?order=desc&limit=${ANALYTICS_PAGE_LIMIT}`;
       let pages = 0;
       let total = 0;
@@ -106,7 +142,13 @@ function AnalyticsPage({
       return Number.isFinite(total) ? total : null;
     };
 
+    /**
+     * @param {number} sinceMs
+     * @param {AbortSignal} signal
+     * @returns {Promise<number | null>}
+     */
     const loadSuccessRate = async (sinceMs, signal) => {
+      /** @type {string | undefined} */
       let url = `${HORIZON_BASE}/transactions?order=desc&limit=${ANALYTICS_PAGE_LIMIT}`;
       let pages = 0;
       let total = 0;
@@ -148,9 +190,16 @@ function AnalyticsPage({
       return (successCount / total) * 100;
     };
 
+    /**
+     * @param {number} sinceMs
+     * @param {AbortSignal} signal
+     * @returns {Promise<number | null>}
+     */
     const loadAvgConfirmation = async (sinceMs, signal) => {
+      /** @type {string | undefined} */
       let url = `${HORIZON_BASE}/ledgers?order=desc&limit=${ANALYTICS_PAGE_LIMIT}`;
       let pages = 0;
+      /** @type {number | null} */
       let previousClosedAt = null;
       let totalDelta = 0;
       let deltaCount = 0;
@@ -225,7 +274,10 @@ function AnalyticsPage({
         });
         setLoadError(null);
       } catch (error) {
-        if (!isActive || error.name === "AbortError") {
+        if (
+          !isActive ||
+          (error instanceof Error && error.name === "AbortError")
+        ) {
           return;
         }
 
@@ -234,7 +286,11 @@ function AnalyticsPage({
           avgConfirmation: null,
           successRate: null,
         });
-        setLoadError(error.message || "Failed to load analytics.");
+        setLoadError(
+          error instanceof Error && error.message
+            ? error.message
+            : "Failed to load analytics.",
+        );
       } finally {
         if (currentController === controller) {
           currentController = null;
@@ -254,6 +310,11 @@ function AnalyticsPage({
     };
   }, [retryCount]);
 
+  /**
+   * @param {number} value
+   * @param {Intl.NumberFormatOptions} [options]
+   * @returns {string}
+   */
   const formatNumber = (value, options = {}) =>
     new Intl.NumberFormat("en-US", options).format(value);
 

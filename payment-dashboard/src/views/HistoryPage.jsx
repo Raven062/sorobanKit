@@ -4,6 +4,64 @@ import ScrollToTop from '../ScrollToTop';
 import MobileNav from './MobileNav';
 import { HORIZON_BASE, NAV_STORAGE_KEY, formatShortAddress, useNavState, useWalletMenu } from './shared';
 
+/**
+ * @typedef {Object} HistoryEntry
+ * @property {string} id
+ * @property {string} counterparty
+ * @property {string} direction
+ * @property {string} amount
+ * @property {string} status
+ * @property {string} type
+ * @property {string} createdAt
+ * @property {string} [transactionHash]
+ * @property {string} asset
+ * @property {string} explorerLink
+ */
+
+/**
+ * @typedef {Object} AssetBalanceChange
+ * @property {string} [asset_type]
+ * @property {string} [from]
+ * @property {string} [to]
+ * @property {string} [amount]
+ */
+
+/**
+ * @typedef {Object} HorizonRecord
+ * @property {string} id
+ * @property {string} type
+ * @property {string} [created_at]
+ * @property {string} [transaction_hash]
+ * @property {boolean} [transaction_successful]
+ * @property {string} [from]
+ * @property {string} [to]
+ * @property {string} [into]
+ * @property {string} [account]
+ * @property {string} [funder]
+ * @property {string} [asset_type]
+ * @property {string} [asset_code]
+ * @property {string} [amount]
+ * @property {string} [starting_balance]
+ * @property {AssetBalanceChange[]} [asset_balance_changes]
+ */
+
+/**
+ * @typedef {Object} HistoryPageProps
+ * @property {string | null} userPublicKey
+ * @property {(address: string) => void} setUserPublicKey
+ * @property {() => Promise<{ address?: string } | void>} onConnectWallet
+ * @property {() => void} onDisconnectWallet
+ * @property {() => void} onRefreshBalance
+ * @property {() => void} onDashboardClick
+ * @property {() => void} onAnalyticsClick
+ * @property {() => void} onHelpClick
+ * @property {() => void} onRegisterClick
+ * @property {boolean} canRegister
+ */
+
+/**
+ * @param {HistoryPageProps} props
+ */
 function HistoryPage({
   userPublicKey,
   setUserPublicKey,
@@ -23,11 +81,14 @@ function HistoryPage({
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [historyError, setHistoryError] = useState("");
+  /** @type {[HistoryEntry[], (value: HistoryEntry[] | ((prev: HistoryEntry[]) => HistoryEntry[])) => void]} */
   const [history, setHistory] = useState([]);
+  /** @type {[string | null, (value: string | null | ((prev: string | null) => string | null)) => void]} */
   const [expandedId, setExpandedId] = useState(null);
   const [refreshIndex, setRefreshIndex] = useState(0);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
+  /** @type {[string | null, (value: string | null) => void]} */
   const [cursor, setCursor] = useState(null);
   const {
     menuRef,
@@ -60,6 +121,10 @@ function HistoryPage({
   };
 
   const loadHistory = useCallback(
+    /**
+     * @param {AbortSignal} signal
+     * @param {{ append?: boolean, nextCursor?: string | null }} [options]
+     */
     async (signal, { append = false, nextCursor = null } = {}) => {
       if (!userPublicKey) {
         return;
@@ -85,6 +150,7 @@ function HistoryPage({
         }
 
         const data = await response.json();
+        /** @type {HorizonRecord[]} */
         const records = data?._embedded?.records ?? [];
         const nextLink = data?._links?.next?.href ?? null;
         const nextPageCursor = nextLink
@@ -100,6 +166,7 @@ function HistoryPage({
             "invoke_host_function",
           ].includes(record.type),
         );
+        /** @type {HistoryEntry[]} */
         const formatted = filtered
           .flatMap((record) => {
             if (
@@ -185,7 +252,10 @@ function HistoryPage({
               },
             ];
           })
-          .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+          .sort(
+            (a, b) =>
+              new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+          );
 
         const latest = formatted[0];
         if (latest?.status === "Success") {
@@ -205,7 +275,7 @@ function HistoryPage({
           setHistory(formatted);
         }
       } catch (error) {
-        if (error.name !== "AbortError") {
+        if (error instanceof Error && error.name !== "AbortError") {
           setHistoryError(
             error.message || "Unable to load transaction history.",
           );

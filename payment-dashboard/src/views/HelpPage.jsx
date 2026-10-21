@@ -3,6 +3,20 @@ import ScrollToTop from '../ScrollToTop';
 import MobileNav from './MobileNav';
 import { NAV_STORAGE_KEY, useNavState } from './shared';
 
+/**
+ * @typedef {Object} HelpPageProps
+ * @property {string | null | undefined} [userPublicKey]
+ * @property {() => void} onDisconnectWallet
+ * @property {() => void} onDashboardClick
+ * @property {() => void} onAnalyticsClick
+ * @property {() => void} onHistoryClick
+ * @property {() => void} onRegisterClick
+ * @property {boolean} canRegister
+ */
+
+/**
+ * @param {HelpPageProps} props
+ */
 function HelpPage({
   userPublicKey,
   onDisconnectWallet,
@@ -13,17 +27,20 @@ function HelpPage({
   canRegister,
 }) {
   const [isNavOpen, setIsNavOpen] = useNavState();
+  /** @type {[string, (value: string | ((prev: string) => string)) => void]} */
   const [activeHelpAction, setActiveHelpAction] = useState("");
   const closeNav = () => {
     sessionStorage.setItem(NAV_STORAGE_KEY, "false");
     setIsNavOpen(false);
   };
+  /** @param {() => void} action */
   const handleNav = (action) => {
     sessionStorage.setItem(NAV_STORAGE_KEY, "false");
     setIsNavOpen(false);
     action();
   };
 
+  /** @type {Record<string, import('react').ReactNode>} */
   const helpContent = {
     identity: (
       <div className="help-action-content">

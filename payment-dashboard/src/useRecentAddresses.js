@@ -12,8 +12,10 @@ function readFromStorage() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
+    /** @type {unknown} */
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((entry) => typeof entry === 'string');
   } catch {
     return [];
   }
@@ -29,7 +31,7 @@ function readFromStorage() {
  * @returns {{ recentAddresses: string[], saveAddress: (address: string) => void, clearAddresses: () => void }}
  */
 export function useRecentAddresses() {
-  const [recentAddresses, setRecentAddresses] = useState(() => readFromStorage());
+  const [recentAddresses, setRecentAddresses] = useState(/** @type {string[]} */ (readFromStorage()));
 
   /**
    * Persists a new address/username to the top of the recent list.
@@ -38,7 +40,7 @@ export function useRecentAddresses() {
    *
    * @param {string} address - The resolved recipient address or username to save.
    */
-  const saveAddress = useCallback((address) => {
+  const saveAddress = useCallback((/** @type {string} */ address) => {
     if (!address || typeof address !== 'string') return;
 
     const trimmed = address.trim();
