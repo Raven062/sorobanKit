@@ -345,3 +345,69 @@ describe('POST /api/v1/register — validation and conflict handling', () => {
     });
   });
 });
+
+describe('POST /api/v1/register — Location header (issue #199)', () => {
+  const originalDomain = process.env.STELLAR_TAG_DOMAIN;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    mockCount.mockResolvedValue(0);
+    mockFindFirst.mockResolvedValue(null);
+    mockCreate.mockResolvedValue({
+      username: 'alice123',
+      address: VALID_ADDRESS,
+      isPrimary: true,
+    });
+  });
+
+  afterEach(() => {
+    if (originalDomain === undefined) {
+      delete process.env.STELLAR_TAG_DOMAIN;
+    } else {
+      process.env.STELLAR_TAG_DOMAIN = originalDomain;
+    }
+  });
+
+  it('includes a Location header pointing to the federation URL on success', async () => {
+    process.env.STELLAR_TAG_DOMAIN = 'example.com';
+
+    const res = await request(app)
+      .post('/api/v1/register')
+      .set('Content-Type', 'application/json')
+      .send(makeRegisterPayload({ username: 'alice123' }));
+
+    expect([200, 201]).toContain(res.status);
+    expect(res.headers.location).toBe('/federation?q=alice123*example.com');
+  });
+
+  it('derives the Location domain from the request host when STELLAR_TAG_DOMAIN is unset', async () => {
+    delete process.env.STELLAR_TAG_DOMAIN;
+
+    const res = await request(app)
+      .post('/api/v1/register')
+      .set('Host', 'stellar.example.org')
+      .set('Content-Type', 'application/json')
+      .send(makeRegisterPayload({ username: 'alice123' }));
+
+    expect([200, 201]).toContain(res.status);
+    expect(res.headers.location).toBe('/federation?q=alice123*stellar.example.org');
+  });
+
+  it('keeps the existing response body contract alongside the Location header', async () => {
+    process.env.STELLAR_TAG_DOMAIN = 'example.com';
+
+    const res = await request(app)
+      .post('/api/v1/register')
+      .set('Content-Type', 'application/json')
+      .send(makeRegisterPayload({ username: 'alice123' }));
+
+    expect(res.headers.location).toBe('/federation?q=alice123*example.com');
+    expect(res.body).toMatchObject({
+      ok: true,
+      username: expect.stringContaining('alice123'),
+      address: VALID_ADDRESS,
+      is_primary: expect.any(Boolean),
+      federation_address: expect.stringContaining('alice123'),
+    });
+  });
+});

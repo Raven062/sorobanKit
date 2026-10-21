@@ -346,20 +346,6 @@ const rotateApiKeyBodySchema = z
 module.exports = {
   sanitizeString,
   sanitized,
-  registerBodySchema,
-  federationQuerySchema,
-  lookupQuerySchema,
-  usersQuerySchema,
-  activityQuerySchema,
-  accountPaymentsQuerySchema,
-  verifyEmailBodySchema,
-  verifyEmailConfirmBodySchema,
-  adminBlockBodySchema,
-  exportQuerySchema,
-  adminExportQuerySchema,
-  adminRoutingStatsQuerySchema,
-  createApiKeyBodySchema,
-  revokeApiKeyBodySchema,
-  rotateApiKeyBodySchema,
+  ...require('./userSchemas'),
+  ...require('./adminSchemas'),
 };
-

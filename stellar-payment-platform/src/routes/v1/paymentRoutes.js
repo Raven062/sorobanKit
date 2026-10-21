@@ -8,6 +8,7 @@ const { paymentIntentSchema, bulkPaymentSchema } = require('../../schemas/paymen
 const { StrKey } = require('@stellar/stellar-sdk');
 const { logger } = require('../../logger');
 const { idempotencyMiddleware } = require('../../../middleware/idempotency');
+const { updatePaymentIntentStatus } = require('../../services/paymentIntentStateMachine');
 
 module.exports = (redisClient) => {
   const router = express.Router();

@@ -37,6 +37,23 @@ const HORIZON_URLS = {
 const HORIZON_URL = HORIZON_URLS[NETWORK] || HORIZON_URLS.testnet;
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS, 10) || 60000;
 
+// Reconnect backoff: base 1s, doubling per attempt, capped at this value.
+const HORIZON_RECONNECT_MAX_MS =
+  parseInt(process.env.HORIZON_RECONNECT_MAX_MS, 10) || 60000;
+const RECONNECT_BASE_MS = 1000;
+
+/**
+ * Compute the reconnect delay for a given (zero-based) attempt number:
+ * min(1000 * 2^attempt, HORIZON_RECONNECT_MAX_MS).
+ *
+ * @param {number} attempt
+ * @returns {number} delay in milliseconds
+ */
+const reconnectDelay = (attempt) => {
+  const exp = RECONNECT_BASE_MS * Math.pow(2, Math.max(0, attempt));
+  return Math.min(exp, HORIZON_RECONNECT_MAX_MS);
+};
+
 // ---------------------------------------------------------------------------
 // Redis — cursor persistence
 // ---------------------------------------------------------------------------
@@ -111,6 +128,12 @@ const healthCheckBreaker = createBreaker(
 // Stream Management
 // ---------------------------------------------------------------------------
 const activeStreams = new Map();
+// Tracks pending reconnect timers so shutdown can cancel them.
+const reconnectTimers = new Map();
+// Tracks the current reconnect attempt count per account.
+const reconnectAttempts = new Map();
+// Set once shutdown begins so no new reconnects are scheduled.
+let shuttingDown = false;
 
 // ---------------------------------------------------------------------------
 // Formatting Helpers
@@ -141,9 +164,51 @@ const formatPayment = (payment, trackedAccount) => {
 // ---------------------------------------------------------------------------
 
 /**
+ * Schedule a reconnect for an account using exponential backoff.
+ * The cursor is re-loaded from Redis at reconnect time so the stream
+ * resumes from the last processed event rather than replaying or missing.
+ *
+ * @param {string} accountId
+ */
+const scheduleReconnect = (accountId) => {
+  if (shuttingDown) return;
+  if (reconnectTimers.has(accountId)) return; // already scheduled
+
+  const attempt = reconnectAttempts.get(accountId) || 0;
+  const delay = reconnectDelay(attempt);
+
+  logger.warn(
+    `[${timestamp()}] 🔄 Reconnect attempt ${attempt + 1} for ${accountId} in ${delay}ms`,
+  );
+
+  const timer = setTimeout(async () => {
+    reconnectTimers.delete(accountId);
+    if (shuttingDown) return;
+
+    try {
+      const cursor = await loadCursor();
+      reconnectAttempts.set(accountId, attempt + 1);
+      watchAccount(accountId, cursor);
+    } catch (err) {
+      // Never let a reconnect failure crash the process.
+      logger.error(
+        { err },
+        `[${timestamp()}] ❌ Reconnect failed for ${accountId}; retrying`,
+      );
+      scheduleReconnect(accountId);
+    }
+  }, delay);
+
+  // Don't keep the event loop alive solely for a pending reconnect.
+  if (typeof timer.unref === 'function') timer.unref();
+
+  reconnectTimers.set(accountId, timer);
+};
+
+/**
  * Open a payment SSE stream for a single Stellar account.
- * On error the stream is removed from the active map so the next sync cycle
- * can attempt to reconnect it (instead of staying stuck on a dead stream).
+ * On error/close the stream is removed from the active map and a reconnect
+ * is scheduled with exponential backoff, resuming from the Redis cursor.
  *
  * @param {string} accountId  Stellar public key to watch.
  * @param {string} [startCursor='now']  Horizon paging_token to resume from.
@@ -152,52 +217,76 @@ const watchAccount = (accountId, startCursor = 'now') => {
   if (activeStreams.has(accountId)) {
     return; // Already watching
   }
+  if (shuttingDown) return;
 
   logger.info(`[${timestamp()}] 👁️  Watching payments for ${accountId} (cursor: ${startCursor})`);
 
-  const closeStream = horizon
-    .payments()
-    .forAccount(accountId)
-    .cursor(startCursor)
-    .stream({
-      onmessage: (payment) => {
-        if (payment.type === 'payment' || payment.type_i === 1) {
-          logger.info(formatPayment(payment, accountId));
+  let closed = false;
 
-          // Persist the cursor before dispatching so a crash after dispatch
-          // doesn't re-deliver the same event on the next restart.
-          if (payment.paging_token) {
-            saveCursor(payment.paging_token);
+  const handleDisconnect = (error) => {
+    if (closed) return;
+    closed = true;
+
+    if (error) {
+      logger.error(
+        `[${timestamp()}] ⚠️  Stream error for ${accountId}:`,
+        error?.message || error,
+      );
+    } else {
+      logger.warn(
+        `[${timestamp()}] ⚠️  Stream closed for ${accountId}`,
+      );
+    }
+
+    activeStreams.delete(accountId);
+    scheduleReconnect(accountId);
+  };
+
+  let closeStream;
+  try {
+    closeStream = horizon
+      .payments()
+      .forAccount(accountId)
+      .cursor(startCursor)
+      .stream({
+        onmessage: (payment) => {
+          if (payment.type === 'payment' || payment.type_i === 1) {
+            logger.info(formatPayment(payment, accountId));
+
+            // Persist the cursor before dispatching so a crash after dispatch
+            // doesn't re-deliver the same event on the next restart.
+            if (payment.paging_token) {
+              saveCursor(payment.paging_token);
+            }
+
+            // A successful event means the connection is healthy again.
+            reconnectAttempts.set(accountId, 0);
+
+            dispatchPaymentWebhooks({
+              prisma,
+              poolGetFn: poolGet,
+              poolRunFn: poolRun,
+              payment,
+            }).catch((err) =>
+              logger.error(
+                `[${timestamp()}] ⚠️  Webhook dispatch failed for tx ${payment.transaction_hash}:`,
+                err?.message || err,
+              ),
+            );
           }
+        },
+        onerror: (error) => handleDisconnect(error),
+      });
+  } catch (err) {
+    // Synchronous failure opening the stream — treat as a disconnect.
+    handleDisconnect(err);
+    return;
+  }
 
-          dispatchPaymentWebhooks({
-            prisma,
-            poolGetFn: poolGet,
-            poolRunFn: poolRun,
-            payment,
-          }).catch((err) =>
-            logger.error(
-              `[${timestamp()}] ⚠️  Webhook dispatch failed for tx ${payment.transaction_hash}:`,
-              err?.message || err,
-            ),
-          );
-        }
-      },
-      onerror: (error) => {
-        logger.error(
-          `[${timestamp()}] ⚠️  Stream error for ${accountId}:`,
-          error?.message || error,
-        );
-        // Remove the dead stream so syncWatchedAccounts can re-open it on the
-        // next poll cycle instead of leaving a stale entry in the map.
-        activeStreams.delete(accountId);
-        logger.info(
-          `[${timestamp()}] 🔄 Removed dead stream for ${accountId}; will reconnect on next sync`,
-        );
-      },
-    });
-
-  activeStreams.set(accountId, closeStream);
+  activeStreams.set(accountId, () => {
+    closed = true;
+    if (typeof closeStream === 'function') closeStream();
+  });
 };
 
 /**
@@ -257,6 +346,12 @@ const syncWatchedAccounts = async () => {
 // ---------------------------------------------------------------------------
 const shutdown = async () => {
   logger.info(`\n[${timestamp()}] Shutting down Horizon listener...`);
+  shuttingDown = true;
+  for (const [address, timer] of reconnectTimers) {
+    clearTimeout(timer);
+    logger.info(`  Cancelled pending reconnect for ${address}`);
+  }
+  reconnectTimers.clear();
   for (const [address, closeFn] of activeStreams) {
     if (typeof closeFn === 'function') closeFn();
     logger.info(`  Closed stream for ${address}`);
@@ -317,4 +412,13 @@ main().catch((err) => {
 });
 
 // Exported for unit tests only.
-module.exports = { loadCursor, saveCursor, CURSOR_KEY, watchAccount, syncWatchedAccounts };
+module.exports = {
+  loadCursor,
+  saveCursor,
+  CURSOR_KEY,
+  watchAccount,
+  syncWatchedAccounts,
+  reconnectDelay,
+  scheduleReconnect,
+  HORIZON_RECONNECT_MAX_MS,
+};

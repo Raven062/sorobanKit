@@ -9,8 +9,9 @@ import { useDebounce } from './useDebounce'
  * the value has been stable for DEBOUNCE_MS milliseconds.
  *
  * @param {number|null} latency - Latency in milliseconds
- * @param {string} status - Status: idle, checking, healthy, unhealthy
+ * @param {'idle'|'checking'|'healthy'|'unhealthy'} status - Status: idle, checking, healthy, unhealthy
  * @param {number} [debounceMs=150] - Debounce window in milliseconds
+ * @returns {import('react').ReactElement}
  */
 export const LatencyGauge = ({ latency, status, debounceMs = 150 }) => {
   const debouncedLatency = useDebounce(latency, debounceMs)

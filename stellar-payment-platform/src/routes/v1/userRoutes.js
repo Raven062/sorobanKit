@@ -2,11 +2,15 @@ const express = require("express");
 const xss = require("xss");
 const { StrKey } = require("@stellar/stellar-sdk");
 const { prisma, withTransaction } = require("../../../prismaClient");
-const { verifyMultiSignerThreshold } = require("../../multisigner-verifier");
+const {
+  verifyMultiSignerThreshold,
+  fetchAccountSigners,
+} = require("../../multisigner-verifier");
 const { poolGet, poolRun, poolAll, etagCache } = require("../../db");
 const { logger } = require("../../logger");
 const { transferAccount } = require("../../services/registrationService");
 const { lookupCached, invalidateFederationCache } = require("../../cache");
+const federationCache = require("../../federationCache");
 const {
   paginatedResponse,
   parsePagination,
@@ -214,11 +218,22 @@ router.post(
 
     const normalizedUsername = username.toLowerCase();
 
+    // #171 — these guards apply to every registration slot (primary and
+    // aliases), not just the first username for an address.
     if (RESERVED_NAMES.includes(normalizedUsername)) {
       return next(
         new ApiError(
           "FORBIDDEN",
           "This username is reserved and cannot be registered.",
+        ),
+      );
+    }
+
+    if (BLOCKED_EXCHANGES.includes(address)) {
+      return next(
+        new ApiError(
+          "FORBIDDEN",
+          "This address is blocked and cannot register federation usernames.",
         ),
       );
     }
@@ -430,10 +445,22 @@ router.delete(
           where: { username },
           data: { deletedAt: new Date() },
         });
-
-        // Invalidate any stale federation cache entries
-        invalidateFederationCache(username, existing.address);
       });
+
+      // #198 — explicitly drop the federation cache entry for the
+      // unregistered username (and its address) so GET /federation misses the
+      // cache and returns 404 immediately instead of serving a stale address
+      // for the remainder of the TTL. The TTL-based eviction remains as a
+      // fallback if the explicit delete fails.
+      try {
+        await federationCache.del(username);
+      } catch (cacheError) {
+        logger.warn(
+          `Federation cache invalidation failed for ${username}:`,
+          cacheError.message,
+        );
+      }
+      invalidateFederationCache(username, existing.address);
 
       await recordActivity(prisma, {
         username,
@@ -458,6 +485,11 @@ router.delete(
 // webhook endpoints prove it: a signature over `activity:<username>` made with
 // the account key, passed in the X-Stellar-Signature header (or the body, as
 // the webhook routes accept it).
+//
+// #184 — Accounts may use Ed25519 multisig, so the signature is verified with
+// the multisigner verifier against the account's full signer list rather than
+// only the primary account key. Secondary signers are therefore accepted as
+// long as the signature meets the account's thresholds.
 router.get(
   "/users/:username/activity",
   validateSchema({ query: activityQuerySchema }),
@@ -470,16 +502,71 @@ router.get(
       return next(new ApiError("INVALID_INPUT", "Missing username parameter."));
     }
 
-    let owner;
+    const owner = await prisma.user.findFirst({
+      where: { username, deletedAt: null },
+      select: { username: true, address: true },
+    });
+
+    if (!owner) {
+      return next(new ApiError("NOT_FOUND", "Username not found."));
+    }
+
+    const signature = req.get("X-Stellar-Signature") || req.body?.signature;
+    const signerAddress =
+      req.get("X-Stellar-Signer") || req.body?.signerAddress;
+
+    if (!signature || !signerAddress) {
+      return next(
+        new ApiError(
+          "UNAUTHORIZED",
+          "Missing signature or signer address for ownership verification.",
+        ),
+      );
+    }
+
+    let signers;
     try {
-      owner = await authenticateUsernameOwner({
-        username,
-        signature: req.get("X-Stellar-Signature") || req.body?.signature,
-        signerAddress: req.get("X-Stellar-Signer") || req.body?.signerAddress,
-        operation: "activity",
-      });
+      signers = await fetchAccountSigners(owner.address);
     } catch (error) {
-      return next(error);
+      logger.error("Failed to fetch account signers:", error.message);
+      return next(
+        new ApiError(
+          "UNAUTHORIZED",
+          "Unable to verify ownership: account signers unavailable.",
+        ),
+      );
+    }
+
+    const signerKeys = (signers || [])
+      .map((signer) => signer.key || signer.publicKey || signer)
+      .filter((key) => typeof key === "string" && key.length > 0);
+
+    if (!signerKeys.includes(signerAddress)) {
+      return next(
+        new ApiError(
+          "UNAUTHORIZED",
+          "Signer is not authorized for this account.",
+        ),
+      );
+    }
+
+    const verification = await verifyMultiSignerThreshold(
+      owner.address,
+      signerKeys,
+      {
+        operationType: "activity",
+        providedSignatures: [signature],
+        signerAddress,
+      },
+    );
+
+    if (!verification.success) {
+      return next(
+        new ApiError(
+          "UNAUTHORIZED",
+          verification.errorMessage || "Signature verification failed.",
+        ),
+      );
     }
 
     const { range, error: dateError } = parseDateRange(req.query);
@@ -533,6 +620,9 @@ router.get(
 
         const result = await lookupCached(address, async () => {
           // #613 — an address can have several usernames; return the primary.
+          // #170 — soft-deleted rows must not be resolvable via reverse lookup;
+          // this mirrors the forward `/federation` query, which also filters
+          // `deletedAt: null`.
           const row = await prisma.user.findFirst({
             where: { address, deletedAt: null },
             select: { username: true },

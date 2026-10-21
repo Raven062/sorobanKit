@@ -19,11 +19,13 @@ Use this checklist for every deployment. Do not skip steps.
 - [ ] Confirm the approval prompt appears and approve it (Actions → the running
       workflow → *Review deployments* → select `testnet` → *Approve and deploy*)
 - [ ] Verify the deploy steps run only after approval
+- [ ] Configure `TESTNET_API_URL` in **Settings → Secrets and variables → Actions** (or under the `testnet` environment secrets) pointing to the deployed testnet API base URL so the post-deploy `/health` verification step can confirm `200 OK` and `status: "up"`
 - [ ] Smoke-test the integration environment after the deploy completes
 
 > The `testnet` environment must exist in **Settings → Environments** with at
-> least one required reviewer configured. Without it, the approval gate will
-> not be enforced.
+> least one required reviewer configured, and `TESTNET_API_URL` must be set as a
+> required repository secret. Without them, the approval gate or post-deploy
+> health check will fail.
 
 ## Post-Deployment
 

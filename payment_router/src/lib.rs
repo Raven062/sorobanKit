@@ -176,6 +176,8 @@ pub enum DataKey {
     FeeCap,
     /// Minimum amount accepted by `route_payment` / `route_payments`, if set.
     MinLimit,
+    /// Minimum transfer amount enforced by `route_payment`, if set.
+    MinAmount,
     /// Whether routing is currently paused.
     Paused,
     /// Maximum amount accepted by a single payment.
@@ -236,6 +238,8 @@ pub enum Error {
     TimelockNotFound = 13,
     /// The contract is frozen; all payments and timelock executions are blocked.
     ContractFrozen = 14,
+    /// The payment amount is below the admin-configured minimum transfer amount.
+    AmountBelowMinimum = 15,
 }
 
 /// Soroban contract that routes token payments between addresses while
@@ -252,6 +256,8 @@ impl PaymentRouter {
     const DAILY_MAX_LIMIT: i128 = 1_000_000 * Self::XLM_DECIMALS; // 1M tokens limit
     const VOLUME_THRESHOLD: i128 = 10_000 * Self::XLM_DECIMALS; // 10,000 XLM threshold for tiered fee discount
     const SECONDS_IN_24H: u64 = 24 * 3600;
+    /// Length of the daily spending window, in seconds (24 hours).
+    const DAY_SECONDS: u64 = 86_400;
     const VERSION: u32 = 1;
 
     const DAY_IN_LEDGERS: u32 = 17280;
@@ -406,6 +412,16 @@ impl PaymentRouter {
             return Err(Error::LimitExceeded);
         }
 
+        // Enforce optional admin-configured minimum transfer amount
+        let min_amount: i128 = env
+            .storage()
+            .instance()
+            .get(&DataKey::MinAmount)
+            .unwrap_or(0);
+        if amount < min_amount {
+            return Err(Error::AmountBelowMinimum);
+        }
+
         // Apply tiered fee discount for high-volume users
         let user_volume: i128 = env
             .storage()
@@ -420,18 +436,25 @@ impl PaymentRouter {
 
         // Check time-based daily spending limits.
         // Storage format: packed BytesN<24> (see pack_spending / unpack_spending).
+        //
+        // The window is anchored to the ledger's wall-clock timestamp (seconds
+        // since the Unix epoch), not to a ledger-sequence count, so a "day" is
+        // always exactly DAY_SECONDS (86 400 s) of real time regardless of how
+        // ledger close times vary.
         let current_time = env.ledger().timestamp();
         let spending_key = DataKey::UserSpending(sender.clone());
 
-        let (mut last_reset_time, mut accumulated_amount): (u64, i128) = env
+        let (mut last_reset_timestamp, mut accumulated_amount): (u64, i128) = env
             .storage()
             .persistent()
             .get::<DataKey, BytesN<24>>(&spending_key)
             .map(|packed| unpack_spending(&packed))
             .unwrap_or((current_time, 0));
 
-        if current_time - last_reset_time >= Self::SECONDS_IN_24H {
-            last_reset_time = current_time;
+        // Reset only once a full 86 400-second window has elapsed.  An elapsed
+        // time of 86 399 s (or less) keeps the current window and counter.
+        if current_time.saturating_sub(last_reset_timestamp) >= Self::DAY_SECONDS {
+            last_reset_timestamp = current_time;
             accumulated_amount = 0;
         }
 
@@ -442,7 +465,7 @@ impl PaymentRouter {
 
         env.storage().persistent().set(
             &spending_key,
-            &pack_spending(env, last_reset_time, accumulated_amount),
+            &pack_spending(env, last_reset_timestamp, accumulated_amount),
         );
         env.storage().persistent().extend_ttl(
             &spending_key,
@@ -934,6 +957,33 @@ impl PaymentRouter {
         admin.require_auth();
 
         env.storage().instance().set(&DataKey::MinLimit, &min_limit);
+        env.storage().instance().extend_ttl(
+            Self::INSTANCE_LIFETIME_THRESHOLD,
+            Self::INSTANCE_BUMP_AMOUNT,
+        );
+        Ok(())
+    }
+
+    /// Sets the minimum transfer amount enforced by `route_payment`. Admin-only.
+    ///
+    /// # Parameters
+    /// - `amount`: Smallest `amount` that `route_payment` will accept going
+    ///   forward. Payments below this value are rejected with
+    ///   `Error::AmountBelowMinimum`.
+    ///
+    /// # Returns
+    /// `Ok(())` on success, or `Err(Error::NotInitialized)` if the contract
+    /// has no admin set yet.
+    ///
+    /// # Panics
+    /// Panics if the current admin does not authorize the call.
+    pub fn set_min_amount(env: Env, amount: i128) -> Result<(), Error> {
+        let admin = Self::require_admin(&env)?;
+        admin.require_auth();
+
+        env.storage()
+            .instance()
+            .set(&DataKey::MinAmount, &amount);
         env.storage().instance().extend_ttl(
             Self::INSTANCE_LIFETIME_THRESHOLD,
             Self::INSTANCE_BUMP_AMOUNT,
@@ -2119,13 +2169,15 @@ mod test {
         let res = client.try_route_payment(&sender, &recipient, &token_address, &2000);
         assert_eq!(res.unwrap_err().unwrap(), Error::LimitExceeded);
 
-        // Advance time past 24 hours to reset the daily limit
+        // Advance the ledger timestamp past 24 hours to reset the daily limit.
+        // The ledger sequence number is deliberately left untouched: the reset
+        // must be driven by wall-clock time, not by ledger count.
         let current_time = env.ledger().timestamp();
         let current_protocol_version = env.ledger().protocol_version();
         env.ledger().set(LedgerInfo {
-            timestamp: current_time + 86400,
+            timestamp: current_time + PaymentRouter::DAY_SECONDS + 1,
             protocol_version: current_protocol_version,
-            sequence_number: 1,
+            sequence_number: env.ledger().sequence(),
             network_id: env.ledger().network_id().into(),
             base_reserve: 100,
             min_temp_entry_ttl: 16,
@@ -2137,6 +2189,77 @@ mod test {
         // VOLUME_THRESHOLD, so the halved rate applies: 2000 * 50 bps = 10.
         client.route_payment(&sender, &recipient, &token_address, &2000);
         assert_eq!(token_client.balance(&recipient), (limit - 50) + (2000 - 10));
+    }
+
+    /// Advances the ledger timestamp by `delta` seconds without changing the
+    /// ledger sequence number, so tests exercise the wall-clock window only.
+    fn advance_time(env: &Env, delta: u64) {
+        let current_time = env.ledger().timestamp();
+        env.ledger().set(LedgerInfo {
+            timestamp: current_time + delta,
+            protocol_version: env.ledger().protocol_version(),
+            sequence_number: env.ledger().sequence(),
+            network_id: env.ledger().network_id().into(),
+            base_reserve: 100,
+            min_temp_entry_ttl: 16,
+            min_persistent_entry_ttl: 4096,
+            max_entry_ttl: 6312000,
+        });
+    }
+
+    /// A payment made 86 399 seconds after the last reset must NOT reset the
+    /// daily counter: the window is still the same 24-hour period.
+    #[test]
+    fn test_daily_limit_not_reset_at_86399_seconds() {
+        let (env, client, _) = setup_env();
+
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        let (token_address, _token_client, sac) = setup_token(&env);
+
+        let limit = 10_000_000_000_000i128;
+        sac.mint(&sender, &(limit + 2000));
+
+        client.initialize(&admin, &treasury, &100, &50, &PaymentRouter::MAX_AMOUNT);
+
+        // Exhaust the daily limit.
+        client.route_payment(&sender, &recipient, &token_address, &limit);
+
+        // 86 399 s later the window has not yet rolled over.
+        advance_time(&env, PaymentRouter::DAY_SECONDS - 1);
+
+        let res = client.try_route_payment(&sender, &recipient, &token_address, &2000);
+        assert_eq!(res.unwrap_err().unwrap(), Error::LimitExceeded);
+    }
+
+    /// A payment made 86 401 seconds after the last reset starts a fresh
+    /// 24-hour window and succeeds.
+    #[test]
+    fn test_daily_limit_resets_at_86401_seconds() {
+        let (env, client, _) = setup_env();
+
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        let (token_address, _token_client, sac) = setup_token(&env);
+
+        let limit = 10_000_000_000_000i128;
+        sac.mint(&sender, &(limit + 2000));
+
+        client.initialize(&admin, &treasury, &100, &50, &PaymentRouter::MAX_AMOUNT);
+
+        // Exhaust the daily limit.
+        client.route_payment(&sender, &recipient, &token_address, &limit);
+
+        // 86 401 s later a fresh window begins.
+        advance_time(&env, PaymentRouter::DAY_SECONDS + 1);
+
+        client.route_payment(&sender, &recipient, &token_address, &2000);
     }
 
     #[test]
@@ -2635,6 +2758,89 @@ mod test {
         // Trying to withdraw again should fail with NoRefundAvailable
         let res = client.try_withdraw_refund(&user, &token_address, &100);
         assert_eq!(res.unwrap_err().unwrap(), Error::NoRefundAvailable);
+    }
+
+    // ── Minimum transfer amount tests ────────────────────────────────────────
+
+    #[test]
+    fn test_route_payment_below_min_amount_rejected() {
+        let (env, client, _) = setup_env();
+
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        let (token_address, _token_client, sac) = setup_token(&env);
+        sac.mint(&sender, &10_000);
+
+        client.initialize(&admin, &treasury, &100, &50, &PaymentRouter::MAX_AMOUNT);
+        client.set_min_amount(&100);
+
+        // Amount below the minimum must be rejected.
+        let res = client.try_route_payment(&sender, &recipient, &token_address, &99);
+        assert_eq!(res.unwrap_err().unwrap(), Error::AmountBelowMinimum);
+
+        // A single stroop must also be rejected.
+        let res = client.try_route_payment(&sender, &recipient, &token_address, &1);
+        assert_eq!(res.unwrap_err().unwrap(), Error::AmountBelowMinimum);
+    }
+
+    #[test]
+    fn test_route_payment_at_or_above_min_amount_succeeds() {
+        let (env, client, _) = setup_env();
+
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+
+        let (token_address, token_client, sac) = setup_token(&env);
+        sac.mint(&sender, &10_000);
+
+        client.initialize(&admin, &treasury, &100, &50, &PaymentRouter::MAX_AMOUNT);
+        client.set_min_amount(&100);
+
+        // Exactly at the minimum succeeds.
+        client.route_payment(&sender, &recipient, &token_address, &100);
+        assert_eq!(token_client.balance(&recipient), 99);
+
+        // Above the minimum succeeds.
+        client.route_payment(&sender, &recipient, &token_address, &1_000);
+        assert_eq!(token_client.balance(&recipient), 99 + 990);
+    }
+
+    #[test]
+    fn test_set_min_amount_requires_admin_auth() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let treasury = Address::generate(&env);
+        let contract_id = env.register_contract(None, PaymentRouter);
+        let client = PaymentRouterClient::new(&env, &contract_id);
+
+        client.initialize(&admin, &treasury, &100, &1000, &PaymentRouter::MAX_AMOUNT);
+
+        client.set_min_amount(&250);
+
+        // The invocation must have recorded an authorization for the admin,
+        // proving set_min_amount gates on the admin address.
+        let auths = env.auths();
+        let admin_auth_present = auths.iter().any(|(addr, _)| *addr == admin);
+        assert!(
+            admin_auth_present,
+            "set_min_amount must require the admin address to authorize"
+        );
+
+        // The stored value must be readable back through routing behaviour.
+        let sender = Address::generate(&env);
+        let recipient = Address::generate(&env);
+        let (token_address, _token_client, sac) = setup_token(&env);
+        sac.mint(&sender, &10_000);
+
+        let res = client.try_route_payment(&sender, &recipient, &token_address, &249);
+        assert_eq!(res.unwrap_err().unwrap(), Error::AmountBelowMinimum);
     }
 
     #[test]

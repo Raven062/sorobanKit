@@ -43,10 +43,27 @@ async function invalidateFederationCache(redisClient, address, username) {
   }
 }
 
+async function delFederationCacheEntry(redisClient, username) {
+  if (!redisClient || !redisClient.isReady) return;
+
+  if (!username) return;
+
+  const keys = [buildFederationCacheKey('name', username)];
+
+  try {
+    await redisClient.del(keys);
+  } catch (err) {
+    // Swallow the error: TTL-based eviction remains as a fallback so a Redis
+    // failure does not break unregistration.
+    logger.error('Error deleting federation cache entry:', err);
+  }
+}
+
 module.exports = {
   FEDERATION_CACHE_TTL,
   FEDERATION_CACHE_PREFIX,
   buildFederationCacheKey,
   getCachedFederationResult,
   invalidateFederationCache,
+  delFederationCacheEntry,
 };

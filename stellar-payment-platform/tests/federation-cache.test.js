@@ -170,4 +170,96 @@ describe('federation cache invalidation on deregistration (src/cache.js)', () =>
     expect(await federationLookupCached(key, fetchFn)).toBeNull();
     expect(fetchFn).toHaveBeenCalledTimes(2);
   });
+
+  it('still serves fresh registrations from cache within the TTL', async () => {
+    const db = { 'bob': { stellar_address: 'bob*localhost', account_id: 'GBOB' } };
+    const fetchFn = jest.fn(async () => db.bob || null);
+    const key = federationNameKey('bob');
+
+    expect(await federationLookupCached(key, fetchFn)).toEqual(db.bob);
+    expect(await federationLookupCached(key, fetchFn)).toEqual(db.bob);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('falls back to TTL eviction when the explicit delete fails', async () => {
+    const db = { 'carol': { stellar_address: 'carol*localhost', account_id: 'GCAROL' } };
+    const fetchFn = jest.fn(async () => db.carol || null);
+    const key = federationNameKey('carol');
+
+    expect(await federationLookupCached(key, fetchFn)).toEqual(db.carol);
+    expect(await federationLookupCached(key, fetchFn)).toEqual(db.carol);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    // Simulate a failed explicit invalidation: the entry stays cached.
+    const delSpy = jest.spyOn(cache, 'del').mockImplementation(() => {
+      throw new Error('delete failed');
+    });
+    try {
+      invalidateLocalFederationCache('carol', 'GCAROL');
+    } catch (err) {
+      // swallow: caller may propagate, but cache must remain consistent
+    }
+    delSpy.mockRestore();
+
+    // Stale value is still served until TTL eviction.
+    expect(await federationLookupCached(key, fetchFn)).toEqual(db.carol);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+
+    // Once the TTL elapses, the entry is evicted and the DB is consulted again.
+    const ttl = cache.getTtl(key);
+    expect(typeof ttl).toBe('number');
+    jest.spyOn(Date, 'now').mockReturnValue(ttl + 1);
+    try {
+      delete db.carol;
+      expect(await federationLookupCached(key, fetchFn)).toBeNull();
+      expect(fetchFn).toHaveBeenCalledTimes(2);
+    } finally {
+      Date.now.mockRestore();
+    }
+  });
+});
+
+describe('GET /federation after unregistration', () => {
+  const {
+    cache,
+    federationNameKey,
+    federationLookupCached,
+    invalidateFederationCache: invalidateLocalFederationCache,
+  } = require('../src/cache');
+
+  afterEach(() => cache.flushAll());
+
+  /**
+   * Minimal stand-in for the federation route handler: resolves a
+   * `name*domain` query against the DB through the cache and maps a miss
+   * to a 404 response.
+   */
+  async function handleFederationGet(query, db) {
+    const name = query.replace(/\*.*$/, '').toLowerCase();
+    const key = federationNameKey(name);
+    const result = await federationLookupCached(key, async () => db[name] || null);
+    if (!result) {
+      return { status: 404, body: { error: 'not found' } };
+    }
+    return { status: 200, body: result };
+  }
+
+  it('returns 404 immediately after unregistration (no stale cache hit)', async () => {
+    const db = { 'alice': { stellar_address: 'alice*localhost', account_id: 'GALICE' } };
+
+    // Register + warm the cache.
+    const first = await handleFederationGet('alice*localhost', db);
+    expect(first.status).toBe(200);
+    expect(first.body).toEqual(db.alice);
+    const second = await handleFederationGet('alice*localhost', db);
+    expect(second.status).toBe(200);
+
+    // Unregister and invalidate.
+    delete db.alice;
+    invalidateLocalFederationCache('alice', 'GALICE');
+
+    // Immediately after unregistration the endpoint must miss the cache.
+    const after = await handleFederationGet('alice*localhost', db);
+    expect(after.status).toBe(404);
+  });
 });

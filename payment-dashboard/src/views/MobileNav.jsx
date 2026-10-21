@@ -1,3 +1,17 @@
+/**
+ * @typedef {Object} MobileNavProps
+ * @property {string} active
+ * @property {() => void} onDashboardClick
+ * @property {() => void} onHistoryClick
+ * @property {() => void} onAnalyticsClick
+ * @property {() => void} onHelpClick
+ * @property {() => void} onRegisterClick
+ * @property {boolean} canRegister
+ */
+
+/**
+ * @param {MobileNavProps} props
+ */
 function MobileNav({
   active,
   onDashboardClick,

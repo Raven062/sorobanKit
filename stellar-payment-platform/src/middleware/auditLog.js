@@ -9,7 +9,7 @@
 
 const { logger } = require('../logger');
 
-const SENSITIVE_KEYS = [
+const SENSITIVE_KEYS = Object.freeze([
   'password',
   'pass',
   'secret',
@@ -25,10 +25,12 @@ const SENSITIVE_KEYS = [
   'access_token',
   'refreshtoken',
   'refresh_token',
-];
+]);
+
+const REDACTED_PLACEHOLDER = '[REDACTED]';
 
 const SENSITIVE_REGEX = new RegExp(
-  `^(${SENSITIVE_KEYS.join('|')})$`,
+  `^(${SENSITIVE_KEYS.map((k) => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})$`,
   'i',
 );
 
@@ -61,11 +63,9 @@ const redactSensitiveData = (data) => {
     const redacted = {};
     for (const [key, value] of Object.entries(data)) {
       if (SENSITIVE_REGEX.test(key)) {
-        redacted[key] = '[REDACTED]';
-      } else if (typeof value === 'object' && value !== null) {
-        redacted[key] = redactSensitiveData(value);
+        redacted[key] = REDACTED_PLACEHOLDER;
       } else {
-        redacted[key] = value;
+        redacted[key] = redactSensitiveData(value);
       }
     }
     return redacted;
@@ -177,4 +177,6 @@ module.exports = {
   redactSensitiveData,
   extractUserId,
   extractIpAddress,
+  SENSITIVE_KEYS,
+  REDACTED_PLACEHOLDER,
 };

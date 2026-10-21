@@ -3,6 +3,23 @@ import { API_BASE, apiErrorMessage, walletKit } from './shared'; // <-- 1. Impor
 
 const USERNAME_REGEX = /^[a-zA-Z0-9]/;
 
+/**
+ * @typedef {Object} RegistrationPageProps
+ * @property {string} userPublicKey
+ * @property {(publicKey: string) => void} setUserPublicKey
+ * @property {() => void} onBack
+ * @property {() => void} onRegistered
+ */
+
+/**
+ * @typedef {Object} Status
+ * @property {string} text
+ * @property {string} tone
+ */
+
+/**
+ * @param {RegistrationPageProps} props
+ */
 function RegistrationPage({
   userPublicKey,
   setUserPublicKey,
@@ -11,9 +28,11 @@ function RegistrationPage({
 }) {
   const [username, setUsername] = useState("");
   const [usernameError, setUsernameError] = useState("");
+  const [addressError, setAddressError] = useState("");
   const [memoType, setMemoType] = useState("");
   const [memo, setMemo] = useState("");
   const [memoError, setMemoError] = useState("");
+  /** @type {[Status, (status: Status) => void]} */
   const [status, setStatus] = useState({
     text: "Connect a wallet to begin your registration.",
     tone: "neutral",
@@ -25,6 +44,10 @@ function RegistrationPage({
     ? `Connected: ${userPublicKey.substring(0, 5)}...${userPublicKey.substring(51)}`
     : "No wallet connected";
 
+  /**
+   * @param {string} text
+   * @param {string} [tone]
+   */
   const setStatusMessage = (text, tone = "neutral") => {
     setStatus({ text, tone });
   };
@@ -61,11 +84,11 @@ function RegistrationPage({
         onWalletSelected: async (option) => {
           walletKit.setWallet(option.id);
           const addressResponse = await walletKit.getAddress();
-          
-          const publicKey = typeof addressResponse === 'string' 
-            ? addressResponse 
+
+          const publicKey = typeof addressResponse === 'string'
+            ? addressResponse
             : addressResponse.address;
-          
+
           setUserPublicKey(publicKey);
           setStatusMessage(`Wallet connected. Pick your username.`, "success");
         }
@@ -77,9 +100,12 @@ function RegistrationPage({
     }
   };
 
+  /**
+   * @param {import('react').FormEvent<HTMLFormElement>} event
+   */
   const handleSubmit = async (event) => {
     if (isSubmitting) return;
-    
+
     event.preventDefault();
     const cleaned = username.trim();
 
@@ -119,28 +145,31 @@ function RegistrationPage({
     setIsSubmitting(true);
     // 3. Removed the hardcoded Freighter text
     setStatusMessage(
-      "Approve the signature request in your wallet...", 
+      "Approve the signature request in your wallet...",
       "neutral",
     );
 
+    /** @type {string | undefined} */
     let signature;
+    /** @type {string | undefined} */
     let signerAddress;
     try {
       const message = `register:${cleaned.toLowerCase()}:${userPublicKey}`;
-      
+
       // 4. Use walletKit to sign the data dynamically based on the selected wallet
-      // Note: Some wallet kit versions wrap this differently. If signBlob is unavailable, 
+      // Note: Some wallet kit versions wrap this differently. If signBlob is unavailable,
       // check your specific @creit.tech/stellar-wallets-kit version docs for message signing.
-      const result = await walletKit.signBlob 
-        ? await walletKit.signBlob(message) 
+      const result = walletKit.signBlob
+        ? await walletKit.signBlob(message)
         : await walletKit.signMessage(message, { address: userPublicKey });
-      
+
       if (result && result.error) throw new Error(result.error);
-      
+
       let rawSignature = typeof result === 'string' ? result : (result.signedMessage || result.signature);
-      
+
       // walletKit might return a Uint8Array or Buffer object. Convert to base64 string.
       if (typeof rawSignature === 'object' && rawSignature !== null) {
+        /** @type {Uint8Array} */
         let uint8;
         if (rawSignature.type === 'Buffer' && Array.isArray(rawSignature.data)) {
           uint8 = new Uint8Array(rawSignature.data);
@@ -165,23 +194,24 @@ function RegistrationPage({
       } else {
         signature = rawSignature;
       }
-      
+
       if (!signature) {
         throw new Error("Failed to capture signature from wallet.");
       }
 
-      signerAddress = userPublicKey; 
-      
+      signerAddress = userPublicKey;
+
     } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       // Check if it's the specific LOBSTR unsupported error
-      if (err.message && err.message.includes("signMessage")) {
+      if (message.includes("signMessage")) {
         setStatusMessage(
-          "LOBSTR does not support registration signatures. Please click 'Back to dashboard' to skip this step, or connect with Freighter.", 
+          "LOBSTR does not support registration signatures. Please click 'Back to dashboard' to skip this step, or connect with Freighter.",
           "error"
         );
       } else {
         // Handle all other normal errors
-        setStatusMessage(err.message || "Signature request cancelled.", "error");
+        setStatusMessage(message || "Signature request cancelled.", "error");
       }
       setIsSubmitting(false);
       return;
@@ -206,15 +236,44 @@ function RegistrationPage({
         .then(async (response) => {
           const data = await response.json().catch(() => null);
           if (!response.ok) {
+            if (response.status === 422) {
+              const fieldErrors = { username: "", address: "" };
+              const errors = Array.isArray(data?.errors) ? data.errors : [];
+              errors.forEach((entry) => {
+                const field = entry?.field || entry?.param;
+                const message = entry?.message || entry?.msg || "Invalid value.";
+                if (field === "username" || field === "address") {
+                  fieldErrors[field] = fieldErrors[field]
+                    ? `${fieldErrors[field]} ${message}`
+                    : message;
+                }
+              });
+              if (fieldErrors.username || fieldErrors.address) {
+                setUsernameError(fieldErrors.username);
+                setAddressError(fieldErrors.address);
+                setStatusMessage("", "neutral");
+                return null;
+              }
+            }
+
+            if (response.status === 409) {
+              setUsernameError("Username already taken");
+              setStatusMessage("", "neutral");
+              return null;
+            }
+
             throw new Error(
               apiErrorMessage(data, "Registration failed."),
             );
           }
           return data;
         })
-        .then(() => {
+        .then((data) => {
+          if (data === null) {
+            return;
+          }
           setStatusMessage("Username reserved and saved.", "success");
-          
+
           setTimeout(() => {
             if (typeof onRegistered === 'function') {
               onRegistered();
@@ -222,13 +281,15 @@ function RegistrationPage({
           }, 1500);
         })
         .catch((error) => {
-          setStatusMessage(error.message || "Registration failed.", "error");
+          const message = error instanceof Error ? error.message : String(error);
+          setStatusMessage(message || "Registration failed.", "error");
         })
         .finally(() => {
           setIsSubmitting(false);
         });
     } catch (error) {
-      setStatusMessage(error.message || "Registration failed.", "error");
+      const message = error instanceof Error ? error.message : String(error);
+      setStatusMessage(message || "Registration failed.", "error");
     } finally {
       setIsSubmitting(false);
     }
@@ -282,6 +343,17 @@ function RegistrationPage({
           </label>
 
           <label className="field">
+            <span>Address</span>
+            <input
+              type="text"
+              value={userPublicKey || ""}
+              readOnly
+              placeholder="Connect a wallet"
+            />
+            {addressError && <small className="field-error">{addressError}</small>}
+          </label>
+
+          <label className="field">
             <span>Memo type (optional)</span>
             <select
               value={memoType}
@@ -321,7 +393,9 @@ function RegistrationPage({
             {isSubmitting ? "Registering..." : "Register username"}
           </button>
 
-          <p className={`status status-${status.tone}`}>{status.text}</p>
+          {status.text && (
+            <p className={`status status-${status.tone}`}>{status.text}</p>
+          )}
 
           <button type="button" className="link-button" onClick={onBack}>
             Back to dashboard

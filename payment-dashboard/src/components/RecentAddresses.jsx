@@ -2,6 +2,15 @@ import { useEffect, useRef } from 'react';
 import './RecentAddresses.css';
 
 /**
+ * @typedef {Object} RecentAddressesProps
+ * @property {string[]} addresses - Ordered list of recent entries.
+ * @property {(value: string) => void} onSelect - Called when the user clicks an entry.
+ * @property {() => void} onClear - Called when the user clicks "Clear history".
+ * @property {boolean} isVisible - Controls whether the dropdown is shown.
+ * @property {() => void} onClose - Called when the dropdown should close.
+ */
+
+/**
  * RecentAddresses
  *
  * Renders a dropdown list of recently used recipient addresses/usernames.
@@ -9,22 +18,24 @@ import './RecentAddresses.css';
  * The list is hidden when there are no entries, when the input is empty, or
  * when the parent signals it should be closed.
  *
- * Props:
- *  - addresses  {string[]}          - Ordered list of recent entries.
- *  - onSelect   {(value: string) => void} - Called when the user clicks an entry.
- *  - onClear    {() => void}         - Called when the user clicks "Clear history".
- *  - isVisible  {boolean}            - Controls whether the dropdown is shown.
- *  - onClose    {() => void}         - Called when the dropdown should close.
+ * @param {RecentAddressesProps} props
+ * @returns {import('react').ReactElement | null}
  */
 function RecentAddresses({ addresses, onSelect, onClear, isVisible, onClose }) {
+  /** @type {import('react').RefObject<HTMLDivElement>} */
   const containerRef = useRef(null);
 
   // Close dropdown when the user clicks outside of it.
   useEffect(() => {
     if (!isVisible) return;
 
+    /** @param {MouseEvent} event */
     const handleClickOutside = (event) => {
-      if (containerRef.current && !containerRef.current.contains(event.target)) {
+      if (
+        containerRef.current &&
+        event.target instanceof Node &&
+        !containerRef.current.contains(event.target)
+      ) {
         onClose();
       }
     };
@@ -37,6 +48,7 @@ function RecentAddresses({ addresses, onSelect, onClear, isVisible, onClose }) {
   useEffect(() => {
     if (!isVisible) return;
 
+    /** @param {KeyboardEvent} event */
     const handleKeyDown = (event) => {
       if (event.key === 'Escape') {
         onClose();

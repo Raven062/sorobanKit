@@ -4,16 +4,20 @@ const LATENCY_CHECK_INTERVAL = 30 * 1000 // 30 seconds
 const HEALTH_ENDPOINT = '/health'
 
 /**
+ * @typedef {'idle' | 'checking' | 'healthy' | 'unhealthy'} LatencyStatus
+ */
+
+/**
  * Custom hook for tracking real-time API latency
  * Performs periodic ping to /health endpoint and calculates delta time
  * 
  * @param {string} apiBase - Base URL for API calls
- * @returns {Object} Object containing latency value and status
+ * @returns {{ latency: number | null, status: LatencyStatus, isHealthy: boolean, isChecking: boolean }} Object containing latency value and status
  */
 export const useLatencyTracker = (apiBase = '') => {
-  const [latency, setLatency] = useState(null)
-  const [status, setStatus] = useState('idle') // idle, checking, healthy, unhealthy
-  const intervalRef = useRef(null)
+  const [latency, setLatency] = useState(/** @type {number | null} */ (null))
+  const [status, setStatus] = useState(/** @type {LatencyStatus} */ ('idle')) // idle, checking, healthy, unhealthy
+  const intervalRef = useRef(/** @type {ReturnType<typeof setInterval> | null} */ (null))
 
   const checkLatency = useCallback(async () => {
     try {
@@ -53,17 +57,16 @@ export const useLatencyTracker = (apiBase = '') => {
 
   // Set up periodic checks
   useEffect(() => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current)
-    }
-
-    intervalRef.current = setInterval(() => {
+    const intervalId = setInterval(() => {
       checkLatency()
     }, LATENCY_CHECK_INTERVAL)
 
+    intervalRef.current = intervalId
+
     return () => {
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current)
+      clearInterval(intervalId)
+      if (intervalRef.current === intervalId) {
+        intervalRef.current = null
       }
     }
   }, [checkLatency])

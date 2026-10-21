@@ -5,11 +5,16 @@ const { prisma } = require('../../../prismaClient');
 const { logger } = require('../../logger');
 const { HORIZON_BASE } = require('../../services/stellarService');
 
-const HORIZON_TIMEOUT_MS = parseInt(process.env.HEALTH_HORIZON_TIMEOUT_MS, 10) || 3000;
+const DEFAULT_HORIZON_TIMEOUT_MS = 3000;
+
+function getHorizonTimeoutMs() {
+  const parsed = parseInt(process.env.HEALTH_HORIZON_TIMEOUT_MS, 10);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_HORIZON_TIMEOUT_MS;
+}
 
 async function pingHorizon() {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HORIZON_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), getHorizonTimeoutMs());
   try {
     const res = await fetch(HORIZON_BASE, { signal: controller.signal });
     if (!res.ok) throw new Error(`Horizon responded with ${res.status}`);
