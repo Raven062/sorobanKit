@@ -3,7 +3,10 @@ const { Queue, Worker } = require('bullmq');
 const { createRedisConnection } = require('./config/redis');
 const { logger } = require('./logger');
 const { shouldFallbackToLocalRegistry } = require('./utils');
-const { exponentialDelay } = require('./utils/exponentialDelay');
+const {
+  updatePaymentIntentStatus,
+  VALID_TRANSITIONS,
+} = require('./services/paymentIntentStateMachine');
 
 const WEBHOOK_TIMEOUT_MS = 10_000;
 const WEBHOOK_QUEUE_NAME = 'webhook-deliveries';
@@ -288,24 +291,33 @@ const markWebhookFailure = async (prisma, poolRunFn, webhookId, now) => {
 };
 
 /**
- * Emit a deprecation warning when an incoming merchant request relies solely
- * on the deprecated alias header instead of the canonical signature header.
+ * Apply a payment intent status transition driven by a webhook event.
  *
- * @param {object} headers - request headers (lowercased keys expected)
- * @returns {boolean} true when only the alias header was supplied
+ * All writes go through the guarded helper so illegal state machine jumps
+ * (e.g. COMPLETED -> PROCESSING) are rejected with ApiError('CONFLICT')
+ * instead of silently corrupting the payment record.
+ *
+ * @param {object} params
+ * @param {object} params.prisma
+ * @param {string} params.paymentIntentId
+ * @param {string} params.nextStatus
+ * @param {object} [params.data] extra fields to persist alongside the status
+ * @returns {Promise<object>} the updated payment intent
  */
-const warnIfAliasOnly = (headers = {}) => {
-  const hasCanonical = Boolean(headers['x-webhook-signature']);
-  const hasAlias = Boolean(headers['x-stellar-tags-signature']);
-  if (hasAlias && !hasCanonical) {
-    logger.warn(
-      `[webhook-worker] Deprecated header ${WEBHOOK_SIGNATURE_ALIAS_HEADER} used without ` +
-      `X-Webhook-Signature; alias will be removed in ${WEBHOOK_SIGNATURE_ALIAS_REMOVAL_VERSION} ` +
-      `(${WEBHOOK_SIGNATURE_ALIAS_REMOVAL_DATE})`,
-    );
-    return true;
+const applyWebhookPaymentIntentStatus = async ({
+  prisma,
+  paymentIntentId,
+  nextStatus,
+  data = {},
+}) => {
+  if (!paymentIntentId) {
+    throw new Error('paymentIntentId is required to update payment intent status');
   }
-  return false;
+  if (!Object.prototype.hasOwnProperty.call(VALID_TRANSITIONS, nextStatus)) {
+    throw new Error(`Unknown payment intent status: ${nextStatus}`);
+  }
+
+  return updatePaymentIntentStatus(prisma, paymentIntentId, nextStatus, data);
 };
 
 const processWebhookJob = async (job, { prisma, poolRunFn }) => {
@@ -336,6 +348,28 @@ const processWebhookJob = async (job, { prisma, poolRunFn }) => {
   logger.info(
     `[webhook-worker] Delivered event=${payload.event_id} webhook=${webhook.id} attempt=${job.attemptsMade + 1}`,
   );
+
+  // If the event carries a payment intent status transition, apply it through
+  // the guarded helper so illegal jumps are rejected with a CONFLICT error.
+  const intentUpdate = payload?.data?.payment_intent;
+  if (intentUpdate && intentUpdate.id && intentUpdate.status) {
+    try {
+      await applyWebhookPaymentIntentStatus({
+        prisma,
+        paymentIntentId: intentUpdate.id,
+        nextStatus: intentUpdate.status,
+        data: intentUpdate.data || {},
+      });
+      logger.info(
+        `[webhook-worker] Payment intent ${intentUpdate.id} transitioned to ${intentUpdate.status}`,
+      );
+    } catch (error) {
+      logger.error(
+        `[webhook-worker] Rejected payment intent ${intentUpdate.id} transition to ${intentUpdate.status}: ${error.message}`,
+      );
+      throw error;
+    }
+  }
 };
 
 const getWebhookQueue = () => {
@@ -667,6 +701,7 @@ module.exports = {
   startWebhookWorker,
   closeWebhookQueue,
   processWebhookJob,
+  applyWebhookPaymentIntentStatus,
   sendWebhook,
   computeSignature,
   detectSsrfTarget,
