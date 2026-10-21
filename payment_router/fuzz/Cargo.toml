@@ -20,6 +20,13 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "refund_lifecycle"
+path = "fuzz_targets/refund_lifecycle.rs"
+test = false
+doc = false
+bench = false
+
 [patch.crates-io]
 ethnum = { path = "../ethnum-patch" }
 

@@ -9,6 +9,9 @@ const mockLogger = {
   info: jest.fn(),
   warn: jest.fn(),
   error: jest.fn(),
+  // Resolves once all buffered log records have been written to their
+  // transports. The migration check awaits this before calling process.exit.
+  flush: jest.fn().mockResolvedValue(undefined),
 };
 
 jest.mock('../src/logger', () => ({
@@ -331,6 +334,7 @@ describe('strict-mode process.exit integration', () => {
     const { shouldExit } = enforceMigrationPolicy(result);
 
     if (shouldExit) {
+      await mockLogger.flush();
       process.exit(1);
     } else {
       listenSpy();
@@ -338,6 +342,77 @@ describe('strict-mode process.exit integration', () => {
 
     expect(exitSpy).toHaveBeenCalledWith(1);
     expect(listenSpy).not.toHaveBeenCalled();
+
+    exitSpy.mockRestore();
+    delete process.env.DATABASE_URL;
+  });
+
+  it('exits with code 1 when strict mode detects drift', async () => {
+    // Simulate drift output from the prisma CLI.
+    mockExecFile.mockImplementation((_bin, _args, _opts, cb) => {
+      cb(
+        Object.assign(new Error('drift'), { code: 1 }),
+        'following migration(s) differ from the migrations recorded in the database',
+        '',
+      );
+    });
+
+    process.env.MIGRATION_POLICY = 'strict';
+    process.env.DATABASE_URL = 'postgresql://localhost/test';
+
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {});
+    const listenSpy = jest.fn();
+
+    const result = await checkMigrations();
+    expect(result.status).toBe('drift');
+    expect(result.drift).toBe(true);
+
+    const { shouldExit } = enforceMigrationPolicy(result);
+
+    if (shouldExit) {
+      await mockLogger.flush();
+      process.exit(1);
+    } else {
+      listenSpy();
+    }
+
+    expect(exitSpy).toHaveBeenCalledWith(1);
+    expect(listenSpy).not.toHaveBeenCalled();
+
+    exitSpy.mockRestore();
+    delete process.env.DATABASE_URL;
+  });
+
+  it('flushes the logger before process.exit so the error is visible', async () => {
+    mockExecFile.mockImplementation((_bin, _args, _opts, cb) => {
+      cb(
+        Object.assign(new Error('drift'), { code: 1 }),
+        'following migration(s) differ from the migrations recorded in the database',
+        '',
+      );
+    });
+
+    process.env.MIGRATION_POLICY = 'strict';
+    process.env.DATABASE_URL = 'postgresql://localhost/test';
+
+    const callOrder = [];
+    mockLogger.flush.mockImplementationOnce(async () => {
+      callOrder.push('flush');
+    });
+    const exitSpy = jest.spyOn(process, 'exit').mockImplementation(() => {
+      callOrder.push('exit');
+    });
+
+    const result = await checkMigrations();
+    const { shouldExit } = enforceMigrationPolicy(result);
+
+    if (shouldExit) {
+      await mockLogger.flush();
+      process.exit(1);
+    }
+
+    expect(mockLogger.flush).toHaveBeenCalled();
+    expect(callOrder).toEqual(['flush', 'exit']);
 
     exitSpy.mockRestore();
     delete process.env.DATABASE_URL;
@@ -358,12 +433,14 @@ describe('strict-mode process.exit integration', () => {
     const { shouldExit } = enforceMigrationPolicy(result);
 
     if (shouldExit) {
+      await mockLogger.flush();
       process.exit(1);
     } else {
       listenSpy();
     }
 
     expect(exitSpy).not.toHaveBeenCalled();
+    expect(mockLogger.flush).not.toHaveBeenCalled();
     expect(listenSpy).toHaveBeenCalled();
 
     exitSpy.mockRestore();

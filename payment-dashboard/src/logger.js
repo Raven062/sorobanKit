@@ -1,6 +1,11 @@
 import pino from 'pino';
 import pkg from '../package.json';
 
+// Debug logging is only enabled when VITE_DEBUG is explicitly set to 'true'.
+// This keeps wallet addresses and other sensitive debug data out of the
+// browser console in production builds.
+const debugEnabled = import.meta.env.VITE_DEBUG === 'true';
+
 // Simple pino configuration for the frontend
 const logger = pino({
   level: /** @type {any} */ (import.meta).env.PROD ? 'info' : 'debug',

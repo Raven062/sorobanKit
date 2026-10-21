@@ -1,0 +1,362 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Stellar Tags API",
+    "version": "1.0.0",
+    "description": "OpenAPI specification for the Stellar Tags API. Covers the documented endpoints for tags, addresses, activity, and stats.",
+    "license": {
+      "name": "MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000",
+      "description": "Local development server"
+    },
+    {
+      "url": "https://api.stellartags.example",
+      "description": "Production server"
+    }
+  ],
+  "tags": [
+    { "name": "Tags", "description": "Stellar address tag operations" },
+    { "name": "Addresses", "description": "Stellar address lookups" },
+    { "name": "Activity", "description": "Activity feed with cursor pagination" },
+    { "name": "Stats", "description": "Aggregate platform statistics" },
+    { "name": "Admin", "description": "Administrative endpoints" }
+  ],
+  "paths": {
+    "/api/tags": {
+      "get": {
+        "tags": ["Tags"],
+        "summary": "List tags",
+        "operationId": "listTags",
+        "parameters": [
+          { "$ref": "#/components/parameters/PageParam" },
+          { "$ref": "#/components/parameters/LimitParam" },
+          { "name": "q", "in": "query", "description": "Search query", "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "A paginated list of tags",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TagList" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      },
+      "post": {
+        "tags": ["Tags"],
+        "summary": "Create a tag",
+        "operationId": "createTag",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TagInput" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Tag created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Tag" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/tags/{id}": {
+      "parameters": [
+        { "$ref": "#/components/parameters/TagIdParam" }
+      ],
+      "get": {
+        "tags": ["Tags"],
+        "summary": "Get a tag by id",
+        "operationId": "getTag",
+        "responses": {
+          "200": {
+            "description": "Tag details",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Tag" }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "tags": ["Tags"],
+        "summary": "Update a tag",
+        "operationId": "updateTag",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TagInput" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated tag",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Tag" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Tags"],
+        "summary": "Delete a tag",
+        "operationId": "deleteTag",
+        "responses": {
+          "204": { "description": "Tag deleted" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/addresses/{address}": {
+      "get": {
+        "tags": ["Addresses"],
+        "summary": "Get tags for a Stellar address",
+        "operationId": "getAddressTags",
+        "parameters": [
+          { "$ref": "#/components/parameters/AddressParam" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tags associated with the address",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/TagList" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/activity": {
+      "get": {
+        "tags": ["Activity"],
+        "summary": "List activity feed entries",
+        "operationId": "listActivity",
+        "parameters": [
+          { "$ref": "#/components/parameters/CursorParam" },
+          { "$ref": "#/components/parameters/LimitParam" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Cursor-paginated activity feed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ActivityList" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/api/stats": {
+      "get": {
+        "tags": ["Stats"],
+        "summary": "Get platform statistics",
+        "operationId": "getStats",
+        "responses": {
+          "200": {
+            "description": "Aggregate platform statistics",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Stats" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/admin/stats": {
+      "get": {
+        "tags": ["Admin"],
+        "summary": "Get admin statistics",
+        "operationId": "getAdminStats",
+        "security": [{ "bearerAuth": [] }],
+        "responses": {
+          "200": {
+            "description": "Administrative statistics",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Stats" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    },
+    "parameters": {
+      "PageParam": {
+        "name": "page",
+        "in": "query",
+        "description": "Page number (1-based)",
+        "schema": { "type": "integer", "minimum": 1, "default": 1 }
+      },
+      "LimitParam": {
+        "name": "limit",
+        "in": "query",
+        "description": "Maximum number of items per page",
+        "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 }
+      },
+      "CursorParam": {
+        "name": "cursor",
+        "in": "query",
+        "description": "Opaque cursor for cursor-based pagination",
+        "schema": { "type": "string" }
+      },
+      "TagIdParam": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "Tag identifier",
+        "schema": { "type": "string" }
+      },
+      "AddressParam": {
+        "name": "address",
+        "in": "path",
+        "required": true,
+        "description": "Stellar account address (G...)",
+        "schema": { "type": "string", "pattern": "^G[A-Z2-7]{55}$" }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+        }
+      },
+      "Unauthorized": {
+        "description": "Authentication required",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+        }
+      },
+      "Forbidden": {
+        "description": "Insufficient permissions",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+        }
+      }
+    },
+    "schemas": {
+      "Tag": {
+        "type": "object",
+        "required": ["id", "address", "name"],
+        "properties": {
+          "id": { "type": "string" },
+          "address": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TagInput": {
+        "type": "object",
+        "required": ["address", "name"],
+        "properties": {
+          "address": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      },
+      "TagList": {
+        "type": "object",
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Tag" }
+          },
+          "page": { "type": "integer" },
+          "limit": { "type": "integer" },
+          "total": { "type": "integer" }
+        }
+      },
+      "Activity": {
+        "type": "object",
+        "required": ["id", "type", "createdAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "type": { "type": "string" },
+          "address": { "type": "string" },
+          "tagId": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "ActivityList": {
+        "type": "object",
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Activity" }
+          },
+          "nextCursor": { "type": ["string", "null"] },
+          "hasMore": { "type": "boolean" }
+        }
+      },
+      "Stats": {
+        "type": "object",
+        "properties": {
+          "totalTags": { "type": "integer" },
+          "totalAddresses": { "type": "integer" },
+          "totalActivity": { "type": "integer" },
+          "period": { "type": "string" }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": { "type": "string" },
+          "message": { "type": "string" },
+          "details": { "type": "object" }
+        }
+      }
+    }
+  }
+}

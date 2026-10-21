@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import ScrollToTop from '../ScrollToTop';
 import MobileNav from './MobileNav';
 import { NAV_STORAGE_KEY, useNavState } from './shared';
@@ -29,6 +29,43 @@ function HelpPage({
   const [isNavOpen, setIsNavOpen] = useNavState();
   /** @type {[string, (value: string | ((prev: string) => string)) => void]} */
   const [activeHelpAction, setActiveHelpAction] = useState("");
+  const [faqItems, setFaqItems] = useState([]);
+  const [isFaqLoading, setIsFaqLoading] = useState(true);
+  const [faqError, setFaqError] = useState(null);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    const loadFaq = async () => {
+      setIsFaqLoading(true);
+      setFaqError(null);
+      try {
+        const response = await fetch('/faq.json');
+        if (!response.ok) {
+          throw new Error(`Failed to load FAQ (status ${response.status})`);
+        }
+        const data = await response.json();
+        if (!isCancelled) {
+          setFaqItems(Array.isArray(data) ? data : []);
+        }
+      } catch (error) {
+        if (!isCancelled) {
+          setFaqError(error.message || 'Failed to load FAQ');
+        }
+      } finally {
+        if (!isCancelled) {
+          setIsFaqLoading(false);
+        }
+      }
+    };
+
+    loadFaq();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, []);
+
   const closeNav = () => {
     sessionStorage.setItem(NAV_STORAGE_KEY, "false");
     setIsNavOpen(false);
@@ -186,7 +223,33 @@ function HelpPage({
               className={`help-action-panel ${activeHelpAction ? "is-visible" : ""}`}
               aria-live="polite"
             >
-              {helpContent[activeHelpAction] ?? null}
+              {isFaqLoading && (
+                <div className="help-action-content" role="status">
+                  <p>Loading help content…</p>
+                </div>
+              )}
+              {!isFaqLoading && faqError && (
+                <div className="help-action-content" role="alert">
+                  <p>Unable to load help content. Please try again later.</p>
+                </div>
+              )}
+              {!isFaqLoading && !faqError && (
+                <div className="help-action-content">
+                  {faqItems.length === 0 ? (
+                    <p>No help content available yet.</p>
+                  ) : (
+                    faqItems.map((item, index) => (
+                      <div
+                        className="help-action-block"
+                        key={`${item.question}-${index}`}
+                      >
+                        <strong>{item.question}</strong>
+                        <p>{item.answer}</p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
             </div>
             <div className="help-status">
               <span className="status-dot" aria-hidden="true" />

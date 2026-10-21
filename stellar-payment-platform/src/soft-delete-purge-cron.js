@@ -38,11 +38,33 @@ async function runSoftDeletePurge(prisma) {
   const cutoff = new Date();
   cutoff.setDate(cutoff.getDate() - SOFT_DELETE_RETENTION_DAYS);
 
-  const result = await prisma.user.deleteMany({
+  // Collect the usernames of users eligible for purge so their activity logs
+  // can be removed explicitly. This is defense-in-depth: if the schema lacks
+  // `onDelete: Cascade` on ActivityLog → User, relying on cascades alone would
+  // orphan activity rows or trigger foreign key constraint errors.
+  const expiredUsers = await prisma.user.findMany({
     where: {
       deletedAt: { lt: cutoff },
     },
+    select: { username: true },
   });
+
+  const usernames = expiredUsers.map((u) => u.username);
+
+  if (usernames.length === 0) {
+    return 0;
+  }
+
+  const [, result] = await prisma.$transaction([
+    prisma.activityLog.deleteMany({
+      where: { username: { in: usernames } },
+    }),
+    prisma.user.deleteMany({
+      where: {
+        deletedAt: { lt: cutoff },
+      },
+    }),
+  ]);
 
   return result.count;
 }
