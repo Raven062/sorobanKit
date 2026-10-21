@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react';
 import NetworkBadge from '../NetworkBadge';
+// NOTE: Any charting library used by this page must be imported at module scope
+// (not via dynamic import inside the component) so that Rollup hoists it into
+// the lazy chunk created by `React.lazy(() => import('./views/AnalyticsPage'))`
+// in App.jsx. This file currently renders metrics with plain HTML/CSS only.
 import ScrollToTop from '../ScrollToTop';
 import MobileNav from './MobileNav';
 import {

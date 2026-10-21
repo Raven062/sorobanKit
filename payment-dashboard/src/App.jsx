@@ -460,6 +460,107 @@ const [activeView, setActiveView] = useState('dashboard')
             style={{
               backgroundColor: "#DC2626",
               color: "#FFFFFF",
-              padding: "12px 1
+              padding: "12px 16px",
+              textAlign: "center",
+              fontWeight: "500",
+              fontSize: "14px",
+              position: "sticky",
+              top: 0,
+              zIndex: 1000,
+            }}
+          >
+            ⚠️ You are currently offline. Transactions will fail.
+          </div>
+        )}
+        <Suspense fallback={<ViewFallback label="Loading help center..." />}>
+
+        <HelpPage
+          userPublicKey={userPublicKey}
+          onConnectWallet={handleConnectWallet}
+          onDisconnectWallet={handleDisconnectWallet}
+          onDashboardClick={() => handleNavigate("dashboard")}
+          onAnalyticsClick={() => handleNavigate("analytics")}
+          onHistoryClick={() => handleNavigate("history")}
+          onRegisterClick={() => handleNavigate("register")}
+          canRegister={registrationState !== "existing"}
+        />
+        </Suspense>
+      </>
+    );
+  }
+
+  if (activeView === "analytics") {
+    return (
+      <>
+        {isOffline && (
+          <div
+            style={{
+              backgroundColor: "#DC2626",
+              color: "#FFFFFF",
+              padding: "12px 16px",
+              textAlign: "center",
+              fontWeight: "500",
+              fontSize: "14px",
+              position: "sticky",
+              top: 0,
+              zIndex: 1000,
+            }}
+          >
+            ⚠️ You are currently offline. Transactions will fail.
+          </div>
+        )}
+        <Suspense fallback={<ViewFallback label="Loading analytics..." />}>
+          <AnalyticsPage
+            userPublicKey={userPublicKey}
+            onConnectWallet={handleConnectWallet}
+            onDisconnectWallet={handleDisconnectWallet}
+            onDashboardClick={() => handleNavigate("dashboard")}
+            onHistoryClick={() => handleNavigate("history")}
+            onHelpClick={() => handleNavigate("help")}
+            onRegisterClick={() => handleNavigate("register")}
+            canRegister={registrationState !== "existing"}
+          />
+        </Suspense>
+      </>
+    );
+  }
+
+  return (
+    <>
+      {isOffline && (
+        <div
+          style={{
+            backgroundColor: "#DC2626",
+            color: "#FFFFFF",
+            padding: "12px 16px",
+            textAlign: "center",
+            fontWeight: "500",
+            fontSize: "14px",
+            position: "sticky",
+            top: 0,
+            zIndex: 1000,
+          }}
+        >
+          ⚠️ You are currently offline. Transactions will fail.
+        </div>
+      )}
+      <Suspense fallback={<ViewFallback label="Loading dashboard..." />}>
+        <Dashboard
+          userPublicKey={userPublicKey}
+          balance={balance}
+          isRefreshing={isRefreshing}
+          balanceError={balanceError}
+          onRefreshBalance={loadBalance}
+          onConnectWallet={handleConnectWallet}
+          onDisconnectWallet={handleDisconnectWallet}
+          onNavigate={handleNavigate}
+          registrationState={registrationState}
+          onRegistrationStateChange={handleRegistrationStateChange}
+        />
+      </Suspense>
+      <Toaster position="bottom-right" />
+    </>
+  );
+}
 
 /* … truncated 2006 chars — edit only what you need near the top … */
