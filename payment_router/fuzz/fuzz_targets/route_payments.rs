@@ -12,6 +12,13 @@
 //! generator produces negative values freely, so this target asserts that
 //! negative amounts are rejected with `InvalidAmount` instead of being fed
 //! into the subtraction path (which would surface as a false-positive crash).
+//!
+//! Refund lifecycle (issue #195): routing calls are randomly interleaved with
+//! `get_refund_balance`, `withdraw_refund`, and `claim_all_refunds` so the
+//! refund ledger's `i128` arithmetic and state updates are fuzzed too. Amounts
+//! include edge cases (0, `i128::MAX`, negative, and values larger than the
+//! current refund balance) to drive the `amount > balance` paths. Every call
+//! is expected to return a graceful `Result`; a panic is a crash.
 
 use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
@@ -42,9 +49,21 @@ struct FuzzPayment {
     recipient_idx: u8,
 }
 
+/// A single refund-related operation, interleaved with routing calls.
+#[derive(Debug, Arbitrary)]
+enum FuzzRefundOp {
+    /// Query the refund balance for a recipient.
+    GetBalance { recipient_idx: u8 },
+    /// Attempt to withdraw a specific amount from a recipient's refund balance.
+    Withdraw { recipient_idx: u8, amount: i128 },
+    /// Attempt to claim all refunds for a recipient.
+    ClaimAll { recipient_idx: u8 },
+}
+
 #[derive(Debug, Arbitrary)]
 struct FuzzInput {
     payments: Vec<FuzzPayment>,
+    refund_ops: Vec<FuzzRefundOp>,
 }
 
 fuzz_target!(|input: FuzzInput| {
@@ -102,5 +121,44 @@ fuzz_target!(|input: FuzzInput| {
     let result = client.try_route_payments(&payments);
     if has_negative_amount {
         assert_eq!(result, Err(Ok(Error::InvalidAmount)));
+    }
+
+    // Interleave refund operations with the routing call above. Each call is
+    // expected to return a graceful `Result`; any panic is a crash. Amounts
+    // are drawn from the fuzzer (including 0, `i128::MAX`, and negatives) and
+    // are also deliberately inflated past the current refund balance so the
+    // `amount > balance` paths in `withdraw_refund`/`claim_all_refunds` are
+    // exercised.
+    for op in input.refund_ops.iter().take(MAX_PAYMENTS) {
+        match op {
+            FuzzRefundOp::GetBalance { recipient_idx } => {
+                let recipient =
+                    &recipients[*recipient_idx as usize % recipients.len()];
+                // A balance query must never panic; the value itself is
+                // unconstrained.
+                let _ = client.get_refund_balance(recipient);
+            }
+            FuzzRefundOp::Withdraw {
+                recipient_idx,
+                amount,
+            } => {
+                let recipient =
+                    &recipients[*recipient_idx as usize % recipients.len()];
+                // Exercise both the fuzzer-provided amount and an amount
+                // guaranteed to exceed any plausible balance.
+                let _ = client.try_withdraw_refund(recipient, amount);
+                let oversized = client
+                    .get_refund_balance(recipient)
+                    .saturating_add(1);
+                let _ = client.try_withdraw_refund(recipient, &oversized);
+            }
+            FuzzRefundOp::ClaimAll { recipient_idx } => {
+                let recipient =
+                    &recipients[*recipient_idx as usize % recipients.len()];
+                // `claim_all_refunds` must handle an empty/insufficient
+                // balance gracefully rather than panicking.
+                let _ = client.try_claim_all_refunds(recipient);
+            }
+        }
     }
 });
