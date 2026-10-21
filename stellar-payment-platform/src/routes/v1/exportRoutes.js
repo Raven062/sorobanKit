@@ -139,9 +139,27 @@ router.get(
       );
     }
 
+    const filename = `transactions-${address}-${new Date().toISOString().slice(0, 10)}.csv`;
+    const headerRow = `${COLUMNS.join(',')}\r\n`;
+
+    // The first page is already in hand and no headers have been sent, so an
+    // account with no payments can be answered with an explicit header-only
+    // file rather than a stream that opens and immediately closes.
+    if ((page.records || []).length === 0) {
+      res.status(200);
+      res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('X-Total-Records', '0');
+
+      logger.info(
+        `[Correlation ID: ${req.correlationId}] Exported 0 transactions for ${address}`,
+      );
+      return res.end(headerRow);
+    }
+
     // Past this point the response is committed, so a later failure can only be
     // logged and the stream cut — the error envelope needs unsent headers.
-    const filename = `transactions-${address}-${new Date().toISOString().slice(0, 10)}.csv`;
     res.status(200);
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -150,7 +168,7 @@ router.get(
     let rows = 0;
 
     try {
-      await writeChunk(res, `${COLUMNS.join(',')}\r\n`);
+      await writeChunk(res, headerRow);
 
       let truncated = false;
       let pageCount = 0;

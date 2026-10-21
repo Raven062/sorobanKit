@@ -66,6 +66,7 @@ jest.mock('pg', () => ({
 const request = require('supertest');
 
 const ADDRESS = 'GDZST3XVCDTUJ76ZAV2HA72KYQM3DGLLFVDNNZ6XTQCR3BQFGMQ25E4Z';
+const BLOCKED_ADDRESS = 'GBLOCKEDXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX';
 
 describe('#613 username aliases', () => {
   let app;
@@ -138,6 +139,47 @@ describe('#613 username aliases', () => {
       expect(prisma.user.count).toHaveBeenCalledWith({
         where: { address: ADDRESS, deletedAt: null },
       });
+    });
+  });
+
+  describe('reserved and blocked checks on alias registration', () => {
+    test.each(['admin', 'support', 'stellar'])(
+      'registering reserved name "%s" as a non-primary alias is rejected with 403',
+      async (reserved) => {
+        prisma.user.count.mockResolvedValue(1);
+
+        const res = await request(app)
+          .post('/register')
+          .send({ username: reserved, address: ADDRESS });
+
+        expect(res.status).toBe(403);
+        expect(res.body.error.code).toBe('FORBIDDEN');
+        expect(prisma.user.create).not.toHaveBeenCalled();
+      },
+    );
+
+    test('registering an alias for a blocked address is rejected with 403', async () => {
+      prisma.user.count.mockResolvedValue(1);
+
+      const res = await request(app)
+        .post('/register')
+        .send({ username: 'billing', address: BLOCKED_ADDRESS });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+      expect(prisma.user.create).not.toHaveBeenCalled();
+    });
+
+    test('primary registration still rejects reserved names with 403', async () => {
+      prisma.user.count.mockResolvedValue(0);
+
+      const res = await request(app)
+        .post('/register')
+        .send({ username: 'admin', address: ADDRESS });
+
+      expect(res.status).toBe(403);
+      expect(res.body.error.code).toBe('FORBIDDEN');
+      expect(prisma.user.create).not.toHaveBeenCalled();
     });
   });
 

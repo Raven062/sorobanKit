@@ -89,6 +89,62 @@ describe("soft-delete lookup guards", () => {
       [address],
     );
   });
+
+  const address = "GABC1234567890ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890";
+  const users = [
+    { username: "deleted_user*example.com", address, deletedAt: new Date() },
+    { username: "active_user*example.com", address, deletedAt: null },
+  ];
+  const findFirstFromTable = ({ where }) =>
+    Promise.resolve(
+      users.find(
+        (u) =>
+          u.address === where.address &&
+          (where.deletedAt !== null || u.deletedAt === null),
+      ) || null,
+    );
+
+  test("GET /lookup returns 404 for a soft-deleted user's address", async () => {
+    const { prisma } = require("./prismaClient");
+    const { app } = require("./server");
+    prisma.user.findFirst.mockImplementation(findFirstFromTable);
+
+    const response = await request(app).get("/lookup").query({ address });
+
+    expect(response.status).toBe(404);
+    expect(prisma.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ deletedAt: null }),
+      }),
+    );
+  });
+
+  test("GET /lookup resolves an active user's address to the primary username", async () => {
+    const { prisma } = require("./prismaClient");
+    const { app } = require("./server");
+    prisma.user.findFirst.mockImplementation(({ where }) =>
+      Promise.resolve(
+        where.deletedAt === null
+          ? { username: "active_user*example.com", address, deletedAt: null }
+          : null,
+      ),
+    );
+
+    const response = await request(app).get("/lookup").query({ address });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        username: "active_user*example.com",
+        address,
+      }),
+    );
+    expect(prisma.user.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ deletedAt: null }),
+      }),
+    );
+  });
 });
 
 describe("soft-delete federation guard", () => {

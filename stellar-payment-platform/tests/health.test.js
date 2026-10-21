@@ -26,6 +26,11 @@ beforeEach(() => {
   prisma.$queryRaw.mockResolvedValue([{ 1: 1 }]);
   redisClient = { ping: jest.fn().mockResolvedValue('PONG') };
   global.fetch = jest.fn().mockResolvedValue({ ok: true, status: 200 });
+  delete process.env.HEALTH_HORIZON_TIMEOUT_MS;
+});
+
+afterEach(() => {
+  delete process.env.HEALTH_HORIZON_TIMEOUT_MS;
 });
 
 describe('GET /health', () => {
@@ -115,6 +120,53 @@ describe('GET /health', () => {
   test('aborts the Horizon probe once the timeout elapses', async () => {
     await request(buildApp(redisClient)).get('/health');
 
+    const [, options] = global.fetch.mock.calls[0];
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+    expect(options.signal.aborted).toBe(false);
+  });
+
+  test('uses HEALTH_HORIZON_TIMEOUT_MS read at request time', async () => {
+    process.env.HEALTH_HORIZON_TIMEOUT_MS = '500';
+
+    await request(buildApp(redisClient)).get('/health');
+
+    const [, options] = global.fetch.mock.calls[0];
+    expect(options.signal).toBeInstanceOf(AbortSignal);
+    expect(options.signal.aborted).toBe(false);
+  });
+
+  test('aborts the Horizon probe after the configured timeout elapses', async () => {
+    process.env.HEALTH_HORIZON_TIMEOUT_MS = '50';
+
+    let capturedSignal;
+    global.fetch.mockImplementation((url, options) => {
+      capturedSignal = options.signal;
+      return new Promise((resolve, reject) => {
+        options.signal.addEventListener('abort', () =>
+          reject(new Error('The operation was aborted'))
+        );
+      });
+    });
+
+    const startedAt = Date.now();
+    const res = await request(buildApp(redisClient)).get('/health');
+    const elapsed = Date.now() - startedAt;
+
+    expect(capturedSignal).toBeInstanceOf(AbortSignal);
+    expect(capturedSignal.aborted).toBe(true);
+    expect(elapsed).toBeGreaterThanOrEqual(40);
+    expect(elapsed).toBeLessThan(1000);
+    expect(res.status).toBe(503);
+    expect(res.body.horizon).toBe('down');
+  });
+
+  test('falls back to the default timeout when HEALTH_HORIZON_TIMEOUT_MS is invalid', async () => {
+    process.env.HEALTH_HORIZON_TIMEOUT_MS = 'abc';
+
+    const res = await request(buildApp(redisClient)).get('/health');
+
+    expect(res.status).toBe(200);
+    expect(res.body.horizon).toBe('up');
     const [, options] = global.fetch.mock.calls[0];
     expect(options.signal).toBeInstanceOf(AbortSignal);
     expect(options.signal.aborted).toBe(false);
