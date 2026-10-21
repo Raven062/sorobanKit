@@ -87,11 +87,23 @@ else
   "$PRISMA" migrate resolve --applied 20260829000000_soft_deletes || true
   "$PRISMA" migrate deploy
   echo "Verifying migration status..."
-  if "$PRISMA" migrate status >/dev/null 2>&1; then
+  # Capture the migration check's exit code so a strict-policy drift failure is
+  # propagated to Docker instead of being swallowed by `set -e` or npm start.
+  set +e
+  "$PRISMA" migrate status >/dev/null 2>&1
+  MIGRATION_CHECK_EXIT=$?
+  set -e
+  if [ "$MIGRATION_CHECK_EXIT" -eq 0 ]; then
     echo "Database schema is up to date."
   else
     echo "WARNING: Prisma schema is out of sync with the database." >&2
     echo "Run './node_modules/.bin/prisma migrate deploy' and restart the server." >&2
+    # Under MIGRATION_POLICY=strict, drift must fail the container start so the
+    # failure is visible to Docker health checks rather than a silent restart loop.
+    if [ "${MIGRATION_POLICY:-}" = "strict" ]; then
+      echo "ERROR: MIGRATION_POLICY=strict and migration drift detected. Exiting with code $MIGRATION_CHECK_EXIT." >&2
+      exit "$MIGRATION_CHECK_EXIT"
+    fi
   fi
 fi
 

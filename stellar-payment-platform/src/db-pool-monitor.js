@@ -30,6 +30,57 @@ const CHECK_INTERVAL_MS =
 let metricsUnavailableLogged = false;
 
 /**
+ * Gauge indicating whether Prisma pool monitoring is available (1) or not (0).
+ * Exposed so src/metrics.js can register it with the metrics backend.
+ */
+let dbPoolMonitoringAvailable = 0;
+
+/**
+ * Returns the current value of the `db_pool_monitoring_available` gauge.
+ *
+ * @returns {number} 1 when Prisma `$metrics` is available, 0 otherwise.
+ */
+function getDbPoolMonitoringAvailable() {
+  return dbPoolMonitoringAvailable;
+}
+
+/**
+ * Sets the `db_pool_monitoring_available` gauge.
+ *
+ * @param {number} value 1 when available, 0 otherwise.
+ */
+function setDbPoolMonitoringAvailable(value) {
+  dbPoolMonitoringAvailable = value ? 1 : 0;
+}
+
+/**
+ * Probes whether Prisma's `$metrics` API is available (requires the "metrics"
+ * preview feature in schema.prisma and a regenerated client).
+ *
+ * Updates the `db_pool_monitoring_available` gauge and logs a warning once
+ * when the feature is absent.
+ *
+ * @param {import('@prisma/client').PrismaClient} prisma
+ * @returns {boolean} true when `$metrics` is available.
+ */
+function probeMetricsAvailability(prisma) {
+  const available = typeof prisma?.$metrics?.json === 'function';
+
+  setDbPoolMonitoringAvailable(available ? 1 : 0);
+
+  if (!available && !metricsUnavailableLogged) {
+    metricsUnavailableLogged = true;
+    logger.warn(
+      '[db-pool-monitor] Prisma metrics unavailable — ensure the "metrics" ' +
+        'preview feature is enabled in schema.prisma and the client has been regenerated. ' +
+        'Pool monitoring is degraded (db_pool_monitoring_available=0).'
+    );
+  }
+
+  return available;
+}
+
+/**
  * Queries Prisma metrics and returns an object with the current pool snapshot.
  *
  * `$metrics.json()` returns `{ counters, gauges, histograms }`; the pool
@@ -121,6 +172,9 @@ function schedulePoolMonitoring(prisma) {
   let stopped = false;
   let running = false;
 
+  // Detect at startup whether the "metrics" preview feature is enabled.
+  const metricsAvailable = probeMetricsAvailability(prisma);
+
   const tick = async () => {
     if (stopped) return;
     if (running) return; // skip if previous check still in-flight
@@ -134,6 +188,19 @@ function schedulePoolMonitoring(prisma) {
       }
     }
   };
+
+  if (!metricsAvailable) {
+    // Degraded mode: no polling, gauge already set to 0 by the probe.
+    logger.info(
+      '[db-pool-monitor] Pool monitor running in degraded mode — polling skipped ' +
+        'because Prisma metrics are unavailable'
+    );
+    return {
+      stop: () => {
+        stopped = true;
+      },
+    };
+  }
 
   // Kick off the first check immediately (async, fire-and-forget).
   tick();
@@ -150,4 +217,11 @@ function schedulePoolMonitoring(prisma) {
   };
 }
 
-module.exports = { schedulePoolMonitoring, getPoolMetrics, checkPool };
+module.exports = {
+  schedulePoolMonitoring,
+  getPoolMetrics,
+  checkPool,
+  probeMetricsAvailability,
+  getDbPoolMonitoringAvailable,
+  setDbPoolMonitoringAvailable,
+};
