@@ -101,6 +101,21 @@ will not know which services it is meant to remove:
 docker compose --profile dev down
 ```
 
+The `dev` PostgreSQL service stores its data in the named volume
+`postgres_dev_data` (mounted at `/var/lib/postgresql/data`), so rows survive
+container restarts and `down`/`up` cycles — no need to re-run
+`npm run db:seed` every session. The `test` profile database deliberately has
+no volume, so each test run starts from a clean slate.
+
+To wipe the dev database and start fresh, remove the volume while the stack is
+stopped:
+
+```bash
+docker compose --profile dev down
+docker volume rm postgres_dev_data
+docker compose --profile dev up -d
+```
+
 The `integration` profile pulls `stellar/quickstart`, a multi-gigabyte image
 used only by the Soroban contract tests in `tests/integration/`. It is kept
 out of `test` so the API tests do not drag it in.
@@ -151,6 +166,17 @@ For a typical local install that becomes, for example:
 ```env
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/stellar_tags?schema=public"
 ```
+
+The server appends Prisma connection-pool limits to `DATABASE_URL` at startup
+(`src/db.js`), so a constrained host cannot open more connections than
+PostgreSQL allows. Tune them with:
+
+- `DB_POOL_SIZE` - (Optional) Maximum connections in the Prisma pool. Defaults to `10`.
+- `DB_POOL_TIMEOUT` - (Optional) Seconds a query waits for a free connection before failing. Defaults to `30`.
+
+For example, `DB_POOL_SIZE=5` limits the pool to 5 connections. If
+`DATABASE_URL` already contains `connection_limit` or `pool_timeout`, those
+values are left untouched.
 
 The quickest way to get a local database is the dev profile, which also
 brings up Redis:
@@ -209,13 +235,38 @@ unless `SEED_ALLOW_REMOTE=1` is set.
 
 The repository includes a [render.yaml](render.yaml) blueprint for the backend API and its PostgreSQL database. When you deploy from Render, import the blueprint or create the service from the repo so `DATABASE_URL` is injected automatically from the managed database.
 
-If you deploy the backend without the blueprint, make sure the web service has a PostgreSQL `DATABASE_URL` secret configured before startup. The container runs Prisma migrations on boot, so the variable must already exist.
+The blueprint sets `MIGRATION_POLICY=strict` for the production service. Under the default `warn` policy a deploy with pending migrations would still bind a port and serve traffic against an out-of-sync schema, which can cause silent data corruption or query failures. With `strict`, the startup migration check logs an error and exits non-zero **before** `app.listen()`, so the deploy fails its health check and Render never routes traffic to an instance whose schema is not fully migrated. Schema drift becomes a deployment blocker instead of a runtime surprise.
+
+If you deploy the backend without the blueprint, make sure the web service has a PostgreSQL `DATABASE_URL` secret configured before startup, and set `MIGRATION_POLICY=strict` in the service environment to get the same protection. The container runs Prisma migrations on boot, so the variable must already exist.
 
 ### Smart contract (Soroban)
 
 ```bash
 cd payment_router
 cargo build
+```
+
+#### WASM hash verification
+
+`payment_router/wasm.sha256` is a committed manifest holding the expected
+SHA-256 of the compiled contract WASM. It is updated automatically after a
+clean build, so an intentional release only needs the regenerated file
+committed alongside the contract change.
+
+Before uploading the WASM, `scripts/deploy.js` recomputes the SHA-256 of the
+compiled artifact and compares it against the manifest. If they differ, the
+deployment aborts with a clear error, which prevents a corrupted or tampered
+WASM from reaching mainnet. Pass `--skip-hash-check` to bypass the check — a
+warning is logged when you do:
+
+```bash
+./scripts/deploy_contract.sh deploy --network testnet --skip-hash-check
+```
+
+To run the check on its own, without deploying:
+
+```bash
+npm run deploy:verify-hash
 ```
 
 ### Contract TypeScript bindings
@@ -283,6 +334,8 @@ To ensure a seamless local developer installation requiring zero guesswork, plea
 
 ### Server (`stellar-payment-platform/.env` or exported directly)
 - `DATABASE_URL` - **(Required)** PostgreSQL connection string used by Prisma (see [Database setup](#database-setup)).
+- `DB_POOL_SIZE` - (Optional) Maximum number of connections in the Prisma connection pool, applied as `connection_limit` on `DATABASE_URL`. Defaults to `10`.
+- `DB_POOL_TIMEOUT` - (Optional) Seconds a query waits for a free pooled connection before failing, applied as `pool_timeout` on `DATABASE_URL`. Defaults to `30`.
 - `PORT` - (Optional) The port for the Node.js server to listen on. Defaults to `5000`.
 - `HORIZON_NETWORK` - (Optional) Stellar network for the payment listener: `testnet` (default) or `public`.
 - `STELLAR_TAG_DOMAIN` - (Optional) Extra origin to add to the CORS allow-list.
@@ -318,6 +371,22 @@ Both files rotate **daily and whenever they pass 20MB**, older files are gzipped
 anything beyond the retention window is deleted, so logs cannot exhaust the disk. A
 human-readable copy is also printed to the console (silenced when `NODE_ENV=test`, which
 also disables file output so test runs leave no logs behind).
+
+### PII in debug logs
+
+Stellar public keys are PII, so at `LOG_LEVEL=debug` the logger truncates any
+G-address (a string matching the Stellar public key format, `G` followed by 55
+uppercase alphanumerics) to its first 8 and last 4 characters before writing:
+
+```text
+GABC1234...5678
+```
+
+This keeps debug output useful for tracing without persisting full addresses to
+rotating log files or a log aggregator. At `info` level and above keys are logged
+in full, since those records are needed for audit purposes. The truncation is a
+Winston format applied only to debug-level records; memo text and usernames are
+not sanitised.
 
 ## Error responses
 
@@ -529,6 +598,7 @@ differently, so participant and amount columns are normalised per type: a
 Streams transaction records from the database as a CSV or NDJSON download for external accounting.
 - **Query Parameters:**
   - `format` (optional) – `csv` (default) or `json`.
+  - `limit` (optional) – positive integer row limit. When omitted, only the server cap applies.
   - `startDate` (optional) – `YYYY-MM-DD` inclusive lower bound on `createdAt`.
   - `endDate` (optional) – `YYYY-MM-DD` inclusive upper bound on `createdAt`.
 - **Headers:** `x-api-key` (required) – must match `ADMIN_API_KEY`.
@@ -538,7 +608,7 @@ Streams transaction records from the database as a CSV or NDJSON download for ex
   - `400 Bad Request`: Invalid date format or `startDate` after `endDate`.
   - `401 Unauthorized`: Missing or invalid API key.
 
-Records are fetched 500 at a time and written directly to the response, so heap use stays bounded regardless of export size. JSON output is newline-delimited (one object per line) for easy streaming parsing.
+Records are fetched at most 500 at a time and written directly to the response. The export stops at the lower of `limit` and `ADMIN_EXPORT_MAX_ROWS` (default `1000000`). Configure the cap as a positive integer no greater than `2147483647`; invalid configuration fails closed with HTTP 500. Invalid limits return HTTP 400. A bounded one-row probe checks for additional matching records before streaming starts, so truncated downloads include `X-Truncated: true`; exports ending exactly at the boundary omit that header. JSON output remains newline-delimited (one object per line).
 
 ### `GET /admin/stats/routing`
 Returns historical payment routing statistics and aggregated volumes, fees, and transaction counts grouped by day, week, or month.
@@ -589,6 +659,28 @@ rate limiter so a scraper on a fixed interval is never throttled.
 Memory and CPU come from `prom-client`'s default collectors. The pool gauges read
 Prisma's `$metrics` (which requires the `metrics` preview feature in
 `schema.prisma`) and report `0` when it is unavailable.
+
+### Monitoring and alerts
+
+The repository ships Prometheus alerting rules in
+[docs/prometheus-alerts.yml](docs/prometheus-alerts.yml). Load them with your
+scrape config:
+
+```yaml
+rule_files:
+  - /etc/prometheus/docs/prometheus-alerts.yml
+```
+
+| Alert | Expression | For | Meaning |
+| --- | --- | --- | --- |
+| `StellarTagsDBPoolWaiting` | `stellar_tags_db_pool_queries_waiting > 5` | `30s` | Queries are queuing for a free DB connection; the pool is saturated and query timeouts are imminent. |
+
+The alert is annotated with a summary and runbook hint, and carries a
+`severity: warning` label so it can be routed by severity. To create the same
+alert in Grafana instead, follow
+[docs/grafana-alerts.md](docs/grafana-alerts.md), which walks through importing
+the rule and wiring it to a notification channel. The alert panel is also
+embedded in [docs/grafana-dashboard.json](docs/grafana-dashboard.json).
 
 ### Deprecated endpoints
 
@@ -670,5 +762,5 @@ See [LICENSE](LICENSE).
 <!-- handsoff-issue-67 -->
 - #67: Soroban contract does not enforce a minimum payment amount (allows amount=0)
 
-<!-- handsoff-issue-235 -->
-- #235: [#68] Grafana dashboard JSON uses hardcoded datasource UID that breaks on import
+<!-- handsoff-issue-229 -->
+- #229: [#62] `RegistrationPage.jsx` does not debounce the username availability check
